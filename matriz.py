@@ -7,7 +7,6 @@ from io import BytesIO
 # --- CONFIGURACIÓN ESTILO UNDMO ---
 st.set_page_config(page_title="DEI - Módulo UNDMO", layout="wide")
 
-# CSS para estilo institucional
 st.markdown("""
     <style>
     .main { background-color: #1a1d1a; color: white; }
@@ -22,8 +21,8 @@ ONEDRIVE_LINK = "https://1drv.ms/x/c/64349795a4386b5f/IQCy6Go7F7MRQ6da_vdajGNdAY
 def cargar_datos():
     try:
         response = requests.get(ONEDRIVE_LINK)
+        # Cargamos el excel saltando la fila de encabezados extra si es necesario
         df = pd.read_excel(BytesIO(response.content))
-        df.columns = [str(c).strip().upper() for c in df.columns]
         return df
     except: return None
 
@@ -40,74 +39,85 @@ df = cargar_datos()
 
 if df is not None:
     hoy = date.today()
-    col_nombre = next((c for c in df.columns if 'NOMBRE' in c), df.columns[0])
-    col_cedula = next((c for c in df.columns if 'CEDULA' in c or 'DOCUMENTO' in c), None)
-    col_comunicado = next((c for c in df.columns if 'COMUNICADO' in c or 'NOTA' in c), None)
     
+    # Mapeo exacto según tu archivo Excel
+    col_nombre = "APELLIDOS Y NOMBRES"
+    col_cedula = "IDENTIFICACIÓN"
+    col_comunicado = "COMUNICADO OFICIAL"
+    
+    # Identificar columnas de fechas por posición o nombre aproximado
+    # En tu excel las fechas de vencimiento están en columnas específicas
     soat_v, tecno_v, lic_v, comunicados = [], [], [], []
 
-    for _, fila in df.iterrows():
-        nombre = fila[col_nombre]
-        cedula = str(fila[col_cedula]).split('.')[0] if col_cedula and pd.notna(fila[col_cedula]) else "---"
+    for index, fila in df.iterrows():
+        nombre = str(fila.get(col_nombre, "DESCONOCIDO"))
+        if nombre == "nan" or "FECHA" in nombre: continue
+        
+        cedula = str(fila.get(col_cedula, "---")).split('.')[0]
         identidad = f"🎖️ **{nombre}** (CC. {cedula})"
 
-        # Comunicados (Solo si hay texto)
-        if col_comunicado and pd.notna(fila[col_comunicado]) and str(fila[col_comunicado]).strip() != "":
-            comunicados.append(f"📢 **{nombre}**: {fila[col_comunicado]}")
+        # Comunicados
+        com = str(fila.get(col_comunicado, ""))
+        if com != "nan" and com.strip() != "" and com.upper() != "NO APLICA":
+            comunicados.append(f"📢 **{nombre}**: {com}")
         
-        # Revisión de fechas
+        # Lógica de fechas (buscando en las columnas del excel)
         for col in df.columns:
+            valor = fila[col]
+            nombre_col = str(col).upper()
             try:
-                f = pd.to_datetime(fila[col]).date()
-                if f < hoy:
-                    if 'SOAT' in col: soat_v.append(f"{identidad} - Vence: {f}")
-                    elif 'TECNO' in col: tecno_v.append(f"{identidad} - Vence: {f}")
-                    elif 'CONDUC' in col and 'TRANSIT' not in col: lic_v.append(f"{identidad} - Vence: {f}")
+                # Intentamos convertir a fecha
+                fecha_v = pd.to_datetime(valor).date()
+                if fecha_v < hoy:
+                    # Clasificamos según el nombre de la columna en tu excel
+                    if "SOAT" in nombre_col:
+                        soat_v.append(f"{identidad} - Vence: {fecha_v}")
+                    elif "TECNO" in nombre_col:
+                        tecno_v.append(f"{identidad} - Vence: {fecha_v}")
+                    elif "LICENCIA DE CONDUCCION" in nombre_col:
+                        lic_v.append(f"{identidad} - Vence: {fecha_v}")
             except: pass
 
     st.title("🛡️ Panel de Control Operativo - UNDMO")
     
-    # 1. COMUNICADOS OFICIALES (Dinámico)
     if comunicados:
-        with st.expander("🔔 COMUNICADOS RECIENTES", expanded=True):
+        with st.expander("🔔 COMUNICADOS OFICIALES", expanded=True):
             for c in comunicados: st.markdown(c)
         st.divider()
 
-    # 2. NOVEDADES (Nombre y Cédula)
     st.subheader("🚨 NOVEDADES CRÍTICAS")
     c1, c2, c3 = st.columns(3)
     
     with c1:
         st.write("🔴 **SOAT VENCIDO**")
-        for m in soat_v: st.markdown(f'<div class="vencido-card">{m}</div>', unsafe_allow_html=True)
+        for m in set(soat_v): st.markdown(f'<div class="vencido-card">{m}</div>', unsafe_allow_html=True)
         if not soat_v: st.success("Sin novedades")
 
     with c2:
-        st.write("🔴 **TECNO VENCIDA**")
-        for m in tecno_v: st.markdown(f'<div class="vencido-card">{m}</div>', unsafe_allow_html=True)
+        st.write("🔴 **TECNOMECÁNICA VENCIDA**")
+        for m in set(tecno_v): st.markdown(f'<div class="vencido-card">{m}</div>', unsafe_allow_html=True)
         if not tecno_v: st.success("Sin novedades")
 
     with c3:
         st.write("🔴 **LICENCIA VENCIDA**")
-        for m in lic_v: st.markdown(f'<div class="vencido-card">{m}</div>', unsafe_allow_html=True)
+        for m in set(lic_v): st.markdown(f'<div class="vencido-card">{m}</div>', unsafe_allow_html=True)
         if not lic_v: st.success("Sin novedades")
 
     st.divider()
 
-    # 3. TABLA GENERAL
-    st.subheader("📋 MATRIZ DE SEGUIMIENTO")
+    # TABLA GENERAL
+    st.subheader("📋 MATRIZ DE SEGUIMIENTO (ESTILO EXCEL)")
     
-    # Función de color corregida para evitar el AttributeError
-    def color_filas(val):
+    def color_vencido(val):
         try:
             if pd.to_datetime(val).date() < hoy: return 'background-color: #5c1414; color: white'
         except: pass
         return ''
 
-    df['FUNCIONARIO '] = df[col_nombre] # Duplicar nombre al final
-    cols_finales = [col_nombre] + [c for c in df.columns if c not in [col_nombre, 'FUNCIONARIO ']] + ['FUNCIONARIO ']
+    # Añadimos el nombre al final para que sea igual al inicio
+    df['APELLIDOS Y NOMBRES '] = df[col_nombre]
     
-    st.dataframe(df[cols_finales].style.map(color_filas), use_container_width=True)
+    st.dataframe(df.style.map(color_vencido), use_container_width=True)
 
 else:
-    st.error("Error de conexión. Verifica el archivo en OneDrive.")
+    st.error("Error al cargar el archivo. Revisa el enlace de OneDrive.")
