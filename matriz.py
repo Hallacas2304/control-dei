@@ -19,41 +19,43 @@ except:
 
 hoy = date.today()
 
-# ---------------- ESTILO NUEVO MÁS LIMPIO ----------------
+# ---------------- ESTILO LIMPIO ----------------
 st.markdown("""
 <style>
 body {
-    background: #0f172a;
+    background: #0b1220;
     color: #e5e7eb;
 }
 
 .card {
-    background: #111827;
-    border: 1px solid #1f2937;
-    padding: 16px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    padding: 14px;
     border-radius: 14px;
-    margin-bottom: 12px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    margin-bottom: 10px;
+    color: #0f172a;
 }
 
 .nombre {
     font-size: 18px;
     font-weight: 700;
-    color: #93c5fd;
+    color: #0f172a;
 }
 
-.badge-rojo { color:#ef4444; font-weight:bold; }
-.badge-amarillo { color:#fbbf24; font-weight:bold; }
-.badge-verde { color:#22c55e; font-weight:bold; }
+.badge-rojo { color:#dc2626; font-weight:bold; }
+.badge-amarillo { color:#d97706; font-weight:bold; }
+.badge-verde { color:#16a34a; font-weight:bold; }
 
 .topbar {
-    background:#0b1220;
+    background:#111827;
     padding:10px;
     border-radius:10px;
     margin-bottom:15px;
+    color:white;
 }
 
 #MainMenu, footer, header {visibility:hidden;}
+.block-container {padding-top:1rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -80,11 +82,11 @@ def cargar():
 
 df = cargar()
 
-# ---------------- STATE SOPORTES ----------------
+# ---------------- SOPORTES ----------------
 if "soportes" not in st.session_state:
     st.session_state.soportes = {}
 
-# ---------------- FUNCION ESTADO ----------------
+# ---------------- ESTADO ----------------
 def estado(fecha):
     if pd.isna(fecha):
         return "COMUNICADO", "badge-amarillo"
@@ -95,43 +97,58 @@ def estado(fecha):
         return "PRÓXIMO", "badge-amarillo"
     return "AL DÍA", "badge-verde"
 
+# ---------------- TELEGRAM ----------------
+def enviar_telegram(lista):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return False, "Telegram no configurado"
+
+    if not lista:
+        return False, "Sin alertas"
+
+    mensaje = "🚨 *ALERTAS DOCUMENTALES*\n\n" + "\n".join(lista)
+
+    r = requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        data={
+            "chat_id": CHAT_ID,
+            "text": mensaje,
+            "parse_mode": "Markdown"
+        }
+    )
+
+    return (True, "Enviado") if r.status_code == 200 else (False, r.text)
+
 # ---------------- MENU ----------------
 menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Excel", "⚙️ Ajustes"], horizontal=True)
 
-# ================== INICIO (BUSCADOR + ALERTAS) ==================
+# ================== INICIO ==================
 if menu == "🏠 Inicio":
 
-    st.markdown('<div class="topbar">🔎 Buscar funcionario o ver alertas críticas</div>', unsafe_allow_html=True)
+    st.markdown('<div class="topbar">🔎 Buscador inteligente de funcionarios</div>', unsafe_allow_html=True)
 
-    busqueda = st.text_input("Buscar nombre (opcional)")
+    buscar = st.text_input("Buscar funcionario (opcional)")
 
-    df_view = df.copy()
-
-    # 🔥 detectar alertas
-    def es_alerta(row):
+    def tiene_alerta(r):
         for c in ["Licencia", "Tecno", "SOAT"]:
-            if pd.notna(row[c]) and row[c].date() <= hoy:
+            if pd.notna(r[c]) and r[c].date() <= hoy:
                 return True
         return False
 
-    df_view["ALERTA"] = df_view.apply(es_alerta, axis=1)
+    df2 = df.copy()
+    df2["ALERTA"] = df2.apply(tiene_alerta, axis=1)
 
-    # FILTRO
-    if busqueda:
-        df_view = df_view[df_view["Nombre"].str.contains(busqueda, case=False)]
+    if buscar:
+        df2 = df2[df2["Nombre"].str.contains(buscar, case=False)]
     else:
-        df_view = df_view[df_view["ALERTA"] == True]  # SOLO ALERTAS EN INICIO
+        df2 = df2[df2["ALERTA"] == True]
 
-    for i, row in df_view.iterrows():
+    for i, row in df2.iterrows():
+
+        nombre = row["Nombre"]
 
         lic, lic_c = estado(row["Licencia"])
         tec, tec_c = estado(row["Tecno"])
         soa, soa_c = estado(row["SOAT"])
-
-        nombre = row["Nombre"]
-
-        if nombre not in st.session_state.soportes:
-            st.session_state.soportes[nombre] = []
 
         st.markdown(f"""
         <div class="card">
@@ -142,9 +159,9 @@ if menu == "🏠 Inicio":
         </div>
         """, unsafe_allow_html=True)
 
-        # 📎 BOTÓN SIEMPRE FRENTE AL FUNCIONARIO
+        # 📎 SUBIDA DIRECTA POR FUNCIONARIO
         files = st.file_uploader(
-            f"📎 Subir documentos para {nombre}",
+            f"📎 Subir documentos - {nombre}",
             accept_multiple_files=True,
             key=f"file_{i}"
         )
@@ -152,7 +169,7 @@ if menu == "🏠 Inicio":
         if files:
             st.session_state.soportes[nombre] = files
 
-        # 📦 descarga
+        # 📦 DESCARGA ZIP
         if st.session_state.soportes.get(nombre):
 
             zip_buffer = BytesIO()
@@ -167,17 +184,21 @@ if menu == "🏠 Inicio":
                 file_name=f"{nombre}_soportes.zip"
             )
 
-# ================== ALERTAS ==================
+# ================== ALERTAS + TELEGRAM ==================
 if menu == "🚨 Alertas":
 
-    st.subheader("🚨 Funcionarios con vencimientos")
+    lista = []
 
     for _, r in df.iterrows():
-
         for c in ["Licencia", "Tecno", "SOAT"]:
             if pd.notna(r[c]) and r[c].date() <= hoy:
+                lista.append(f"{r['Nombre']} → {c} vencido o próximo")
 
-                st.error(f"{r['Nombre']} → {c} VENCIDO / PRÓXIMO")
+    st.error("\n".join(lista) if lista else "Sin alertas 🚀")
+
+    if st.button("📲 Enviar Telegram"):
+        ok, msg = enviar_telegram(lista)
+        st.success(msg) if ok else st.error(msg)
 
 # ================== DASHBOARD ==================
 if menu == "📊 Dashboard":
@@ -191,16 +212,10 @@ if menu == "📊 Dashboard":
         ]
     }).set_index("Tipo"))
 
-# ================== EXCEL (OCULTAR COLUMNAS) ==================
+# ================== EXCEL ==================
 if menu == "✍️ Excel":
 
-    st.subheader("📁 Edición avanzada")
-
-    ocultar = st.multiselect("Ocultar columnas", df.columns.tolist())
-
-    df_show = df.drop(columns=ocultar)
-
-    edit = st.data_editor(df_show, use_container_width=True)
+    edit = st.data_editor(df, use_container_width=True)
 
     buffer = BytesIO()
     edit.to_excel(buffer, index=False)
@@ -210,4 +225,4 @@ if menu == "✍️ Excel":
 # ================== AJUSTES ==================
 if menu == "⚙️ Ajustes":
 
-    st.info("Sistema listo para expansión (Telegram / BD / login)")
+    st.info("Sistema estable 🚀 listo para escalar a base de datos o login")
