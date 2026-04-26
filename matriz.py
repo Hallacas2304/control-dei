@@ -1,39 +1,87 @@
-import streamlit as st import requests
+import streamlit as st
+import requests
 
-Configuración de página
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Panel de Reportes", layout="wide")
 
-st.set_page_config(page_title="Reportes", layout="wide")
+# 🔴 ESTILO BOTONES ROJOS
+st.markdown("""
+    <style>
+    div.stButton > button {
+        background-color: red;
+        color: white;
+        border-radius: 8px;
+        height: 3em;
+        width: 100%;
+        font-weight: bold;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-Estilo para botones rojos
+# ---------------- TELEGRAM ----------------
+def enviar_telegram(mensaje):
+    TOKEN = "TU_BOT_TOKEN"
+    CHAT_ID = "TU_CHAT_ID"
 
-st.markdown(""" <style> div.stButton > button { background-color: red; color: white; border-radius: 8px; height: 3em; width: 100%; font-weight: bold; } </style> """, unsafe_allow_html=True)
+    if not TOKEN or not CHAT_ID:
+        st.error("Token o Chat ID no configurado")
+        return False
 
-Función Telegram (ya funcionando)
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": mensaje
+    }
 
-def enviar_telegram(mensaje): TOKEN = "TU_BOT_TOKEN" CHAT_ID = "TU_CHAT_ID" url = f"https://api.telegram.org/bot{TOKEN}/sendMessage" payload = { "chat_id": CHAT_ID, "text": mensaje } requests.post(url, data=payload)
+    response = requests.post(url, data=payload)
 
-Datos simulados (puedes conectar los tuyos)
+    if response.status_code == 200:
+        return True
+    else:
+        st.error("Error enviando a Telegram")
+        st.write(response.text)
+        return False
 
-reportes = [ {"nombre": "Reporte 1", "estado": "Vacío"}, {"nombre": "Reporte 2", "estado": "Completo"}, {"nombre": "Reporte 3", "estado": "Vacío"}, ]
+# ---------------- DATOS ----------------
+# (Esto puedes conectarlo a tus inputs reales)
+reportes = [
+    {"nombre": "Reporte Ventas", "estado": "Vacío"},
+    {"nombre": "Reporte Clientes", "estado": "Completo"},
+    {"nombre": "Reporte Inventario", "estado": "Vacío"},
+    {"nombre": "Reporte Diario", "estado": "En proceso"},
+]
 
-st.title("Panel de Reportes")
-
-Mostrar reportes en columnas
+# ---------------- UI ----------------
+st.title("📊 Panel de Reportes")
 
 cols = st.columns(len(reportes))
 
-for i, reporte in enumerate(reportes): with cols[i]: estado = reporte["estado"]
+for i, reporte in enumerate(reportes):
+    with cols[i]:
 
-# Reemplazo de texto
-    if estado.lower() == "vacío":
-        estado_mostrar = "En resumen comunicado oficial"
-    else:
-        estado_mostrar = estado
+        nombre = reporte["nombre"]
+        estado = reporte["estado"]
 
-    st.write(f"**{reporte['nombre']}**")
-    st.write(estado_mostrar)
+        # 🧾 CAMBIO DE TEXTO
+        if estado.lower() == "vacío":
+            estado_mostrar = "En resumen comunicado oficial"
+        else:
+            estado_mostrar = estado
 
-    if st.button(f"Enviar {reporte['nombre']}", key=i):
-        mensaje = f"{reporte['nombre']} - {estado_mostrar}"
-        enviar_telegram(mensaje)
-        st.success("Enviado correctamente")
+        st.subheader(nombre)
+        st.write(estado_mostrar)
+
+        # 🔑 KEY ÚNICA (evita errores)
+        boton_key = f"btn_{i}_{nombre}"
+
+        if st.button(f"Enviar {nombre}", key=boton_key):
+            mensaje = f"{nombre} - {estado_mostrar}"
+
+            if enviar_telegram(mensaje):
+                st.success("✅ Enviado correctamente")
+            else:
+                st.error("❌ No se pudo enviar")
+
+# ---------------- EXTRA (OPCIONAL PERO ÚTIL) ----------------
+st.markdown("---")
+st.info("Si no llegan los mensajes, revisa que el bot haya iniciado conversación contigo en Telegram.")
