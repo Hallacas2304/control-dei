@@ -17,81 +17,78 @@ hoy = date.today()
 # ---------------- ESTILO ----------------
 st.markdown("""
 <style>
-html, body {
-    background-color: #0f172a;
-    color: white;
-}
-
-.card {
-    background: #1e293b;
-    padding: 15px;
-    border-radius: 15px;
-    margin-bottom: 10px;
-}
-
-.rojo { color:#ef4444; font-weight:bold; }
-.amarillo { color:#f59e0b; font-weight:bold; }
-.verde { color:#22c55e; font-weight:bold; }
-
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
+html, body {background-color:#0f172a;color:white;}
+.card {background:#1e293b;padding:15px;border-radius:15px;margin-bottom:10px;}
+.rojo {color:#ef4444;font-weight:bold;}
+.amarillo {color:#f59e0b;font-weight:bold;}
+.verde {color:#22c55e;font-weight:bold;}
+#MainMenu, footer, header {visibility:hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- CARGA SEGURA ----------------
+# ---------------- CARGA ----------------
 @st.cache_data(ttl=300)
 def cargar():
-    try:
-        r = requests.get(EXCEL_URL, timeout=20)
-        r.raise_for_status()
+    r = requests.get(EXCEL_URL, timeout=20)
+    r.raise_for_status()
 
-        file = BytesIO(r.content)
-        df = pd.read_excel(file, engine="openpyxl")
+    df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
 
-        # limpiar columnas
-        df.columns = df.columns.str.strip().str.lower()
+    df.columns = df.columns.str.strip().str.lower()
 
-        # detectar columnas automáticamente
-        nombre = next((c for c in df.columns if "nombre" in c), None)
-        licencia = next((c for c in df.columns if "licencia" in c), None)
-        tecno = next((c for c in df.columns if "tecno" in c), None)
-        soat = next((c for c in df.columns if "soat" in c), None)
+    nombre = next((c for c in df.columns if "nombre" in c), None)
+    licencia = next((c for c in df.columns if "licencia" in c), None)
+    tecno = next((c for c in df.columns if "tecno" in c), None)
+    soat = next((c for c in df.columns if "soat" in c), None)
 
-        if not all([nombre, licencia, tecno, soat]):
-            st.error("❌ El Excel no tiene las columnas necesarias")
-            st.stop()
+    df = df[[nombre, licencia, tecno, soat]]
+    df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
 
-        df = df[[nombre, licencia, tecno, soat]].copy()
-        df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
+    for col in df.columns[1:]:
+        df[col] = pd.to_datetime(df[col], errors="coerce")
 
-        for col in ["Licencia", "Tecnomecanica", "SOAT"]:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-
-        df = df.dropna(subset=["Nombre"])
-        df = df[df["Nombre"].astype(str).str.len() > 3]
-
-        return df
-
-    except Exception as e:
-        st.error(f"❌ Error cargando Excel: {e}")
-        st.stop()
+    return df.dropna(subset=["Nombre"])
 
 df = cargar()
 
-# ---------------- FUNCION ESTADO ----------------
+# ---------------- FUNCIONES ----------------
 def evaluar(fecha):
     if pd.isna(fecha):
         return "VACÍO", "amarillo"
-
     dias = (fecha.date() - hoy).days
-
     if dias < 0:
         return "VENCIDO", "rojo"
     elif dias <= 5:
-        return f"VENCE EN {dias} DÍAS", "amarillo"
-    else:
-        return "AL DÍA", "verde"
+        return f"{dias} días", "amarillo"
+    return "AL DÍA", "verde"
+
+# ---------------- TELEGRAM FIX ----------------
+def enviar_telegram(lista):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return False, "TOKEN o CHAT_ID no configurados"
+
+    if not lista:
+        return False, "No hay datos para enviar"
+
+    mensaje = "*🚨 DOCUMENTOS VENCIDOS*\n\n"
+    mensaje += "\n".join(f"- {x}" for x in lista)
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+    try:
+        r = requests.post(url, data={
+            "chat_id": CHAT_ID,
+            "text": mensaje,
+            "parse_mode": "Markdown"
+        })
+
+        if r.status_code == 200:
+            return True, "Mensaje enviado correctamente"
+        else:
+            return False, r.text
+
+    except Exception as e:
+        return False, str(e)
 
 # ---------------- MENU ----------------
 menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Editar", "⚙️ Ajustes"], horizontal=True)
@@ -100,18 +97,6 @@ menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Ed
 if menu == "🏠 Inicio":
 
     st.title("🚓 Control Documental")
-
-    soat_v = df[df["SOAT"].dt.date <= hoy]
-    tec_v = df[df["Tecnomecanica"].dt.date <= hoy]
-    lic_v = df[df["Licencia"].dt.date <= hoy]
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", len(df))
-    c2.metric("SOAT vencido", len(soat_v))
-    c3.metric("Tecnomecánica", len(tec_v))
-    c4.metric("Licencias", len(lic_v))
-
-    st.subheader("👮 Estado por funcionario")
 
     vencidos_lista = []
 
@@ -139,72 +124,50 @@ if menu == "🏠 Inicio":
 
 # ---------------- ALERTAS ----------------
 if menu == "🚨 Alertas":
-
-    st.subheader("🚨 Listados de alerta")
-
-    tab1, tab2, tab3 = st.tabs(["SOAT", "Tecnomecánica", "Licencia"])
-
-    with tab1:
-        st.dataframe(df[df["SOAT"].dt.date <= hoy])
-
-    with tab2:
-        st.dataframe(df[df["Tecnomecanica"].dt.date <= hoy])
-
-    with tab3:
-        st.dataframe(df[df["Licencia"].dt.date <= hoy])
+    st.tabs(["SOAT", "Tecno", "Licencia"])
 
 # ---------------- DASHBOARD ----------------
 if menu == "📊 Dashboard":
-
-    st.subheader("📊 Estadísticas")
-
-    chart = pd.DataFrame({
-        "Tipo": ["SOAT","Tecno","Licencia"],
-        "Cantidad": [
+    st.bar_chart(pd.DataFrame({
+        "Tipo":["SOAT","Tecno","Licencia"],
+        "Cantidad":[
             len(df[df["SOAT"].dt.date <= hoy]),
             len(df[df["Tecnomecanica"].dt.date <= hoy]),
             len(df[df["Licencia"].dt.date <= hoy])
         ]
-    })
-
-    st.bar_chart(chart.set_index("Tipo"))
+    }).set_index("Tipo"))
 
 # ---------------- EDITAR ----------------
 if menu == "✍️ Editar":
-
-    st.subheader("Editar Excel")
-
-    edit = st.data_editor(df, num_rows="dynamic")
-
-    output = BytesIO()
-    edit.to_excel(output, index=False, engine="openpyxl")
-    output.seek(0)
-
-    st.download_button("📥 Descargar Excel actualizado", output, "actualizado.xlsx")
-
-# ---------------- TELEGRAM ----------------
-def enviar():
-    if not TELEGRAM_TOKEN:
-        st.warning("Configura TOKEN en secrets")
-        return
-
-    mensaje = "*🚨 DOCUMENTOS VENCIDOS*\n\n"
-
-    for _, row in df.iterrows():
-        if pd.notna(row["SOAT"]) and row["SOAT"].date() <= hoy:
-            mensaje += f"- {row['Nombre']} → SOAT\n"
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "Markdown"
-    })
+    edit = st.data_editor(df)
+    buffer = BytesIO()
+    edit.to_excel(buffer, index=False)
+    st.download_button("Descargar Excel", buffer.getvalue(), "editado.xlsx")
 
 # ---------------- AJUSTES ----------------
 if menu == "⚙️ Ajustes":
 
-    if st.button("📩 Enviar reporte Telegram"):
-        enviar()
-        st.success("Enviado")
+    st.subheader("📩 Telegram")
+
+    if st.button("Enviar reporte completo"):
+        lista = []
+
+        for _, row in df.iterrows():
+            docs = []
+
+            if pd.notna(row["Licencia"]) and row["Licencia"].date() <= hoy:
+                docs.append("Licencia")
+            if pd.notna(row["Tecnomecanica"]) and row["Tecnomecanica"].date() <= hoy:
+                docs.append("Tecnomecánica")
+            if pd.notna(row["SOAT"]) and row["SOAT"].date() <= hoy:
+                docs.append("SOAT")
+
+            if docs:
+                lista.append(f"{row['Nombre']} → {', '.join(docs)}")
+
+        ok, msg = enviar_telegram(lista)
+
+        if ok:
+            st.success(msg)
+        else:
+            st.error(f"❌ Error Telegram: {msg}")
