@@ -2,4 +2,4 @@ streamlit
 pandas
 openpyxl
 requests
-reportlab
+reportlab==4.0.8
