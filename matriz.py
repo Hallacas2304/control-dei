@@ -7,7 +7,7 @@ from io import BytesIO
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Control DEI2 GUDMO 16", layout="wide")
 
-# Credenciales (Asegúrate de que el Token sea el de @Gudmo16_bot)
+# 🚨 USA ESTE TOKEN (Actualizado de @Gudmo16_bot)
 TOKEN_TELEGRAM = "8056262271:AAGy7x3P-oN1H9T_t7pY_4iQf7-g10T_Q8E"
 CHAT_ID = "6198642735"
 
@@ -18,52 +18,68 @@ def enviar_telegram(mensaje):
         r = requests.post(url, data=payload, timeout=15)
         res = r.json()
         if r.status_code == 200:
-            return True, "✅ ¡Reporte enviado con éxito!"
+            return True, "✅ ¡Reporte enviado!"
         else:
-            return False, f"Error: {res.get('description')}"
-    except:
-        return False, "Error de conexión con Telegram"
+            return False, f"Telegram dice: {res.get('description')}"
+    except: return False, "Error de red"
 
 @st.cache_data(ttl=5)
 def cargar_datos():
     try:
         url_excel = "https://1drv.ms/x/c/64349795a4386b5f/IQCy6Go7F7MRQ6da_vdajGNdAYBXgQ4-3_g-dg05l_mKDCQ?download=1"
         response = requests.get(url_excel)
-        # Cargamos sin encabezados fijos para mapear manualmente
         df = pd.read_excel(BytesIO(response.content))
         return df
-    except:
-        return None
+    except: return None
 
-# --- INICIO DE LA APP ---
+# --- INICIO APP ---
 st.title("🛡️ Control Documentación DEI2 Gudmo 16")
 
 df = cargar_datos()
 
 if df is not None:
-    hoy = pd.to_datetime(date.today())
+    hoy = pd.Timestamp(date.today())
     alertas_encontradas = []
     
-    # 1. Limpiamos nombres de columnas para que sean fáciles de buscar
-    columnas_limpias = [str(c).upper() for c in df.columns]
-
-    # 2. Recorremos cada fila
+    # 1. Buscamos las columnas de interés
+    columnas = [str(c).upper() for c in df.columns]
+    
+    # 2. Procesamos fila por fila
     for i, fila in df.iterrows():
-        # Intentamos obtener el nombre (columna 2 o 3 según la estructura)
-        nombre_raw = str(fila.iloc[2]) if len(fila) > 2 else ""
-        if any(x in nombre_raw.upper() for x in ["NONE", "NAN", "APELLIDOS", "UNIFORMADO", "CEDULA"]):
-            continue
+        # Buscamos el nombre (Columna 'APELLIDOS Y NOMBRES')
+        nombre = str(fila.iloc[2]) if len(fila) > 2 else ""
         
-        # 3. Revisamos cada celda de la fila
+        # Ignoramos filas vacías o con títulos
+        if any(x in nombre.upper() for x in ["NONE", "NAN", "APELLIDOS", "GR", "CEDULA"]):
+            continue
+            
         for col_idx, valor in enumerate(fila):
-            if pd.isna(valor) or str(valor).strip() == "":
-                continue
-            
-            nombre_col = columnas_limpias[col_idx]
-            
-            # Solo analizamos columnas que tengan que ver con vencimientos
-            if any(palabra in nombre_col for palabra in ["SOAT", "TECNO", "LICENCIA", "VENCE", "VENCIMIENTO"]):
+            nombre_col = columnas[col_idx]
+            # Solo si la columna es de las que queremos vigilar
+            if any(palabra in nombre_col for palabra in ["SOAT", "TECNO", "LICENCIA", "VENCE"]):
                 try:
-                    # Intento de conversión robusto (soporta día/mes/año y año/mes/día)
-                    fecha_vencimiento = pd.to_datetime(valor, errors='coerce
-                                                       
+                    fecha_v = pd.to_datetime(valor, errors='coerce', dayfirst=True)
+                    if pd.notna(fecha_v) and fecha_v <= hoy:
+                        alertas_encontradas.append(f"• <b>{nombre}</b>: {nombre_col} ({fecha_v.date()})")
+                except: continue
+
+    # --- MOSTRAR RESULTADOS ANTES DE ENVIAR ---
+    if alertas_encontradas:
+        st.subheader(f"⚠️ Se detectaron {len(alertas_encontradas)} documentos vencidos:")
+        for a in alertas_encontradas[:10]: # Muestra los primeros 10 en la web
+            st.write(a, unsafe_allow_html=True)
+            
+        if st.button("📲 ENVIAR ESTE LISTADO AL TELEGRAM"):
+            reporte = "🚨 <b>NOVEDADES GUDMO 16</b>\n\n" + "\n".join(list(set(alertas_encontradas))[:25])
+            exito, mensaje = enviar_telegram(reporte)
+            if exito: st.success(mensaje)
+            else: st.error(f"❌ {mensaje}")
+    else:
+        st.info("🔎 El sistema no ve documentos vencidos. Si hay alguno, verifica la fecha en el Excel.")
+        st.button("📲 PROBAR CONEXIÓN (Enviar Hola)")
+
+    st.divider()
+    st.dataframe(df)
+else:
+    st.error("No hay conexión con OneDrive.")
+    
