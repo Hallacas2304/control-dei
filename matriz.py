@@ -7,7 +7,7 @@ from io import BytesIO
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Control DEI2 GUDMO 16", layout="wide")
 
-# ✅ TOKEN SACADO DE TU CAPTURA DE PANTALLA (21:24)
+# 🚨 TOKEN VERIFICADO DE TU CAPTURA DE BOTFATHER
 TOKEN_TELEGRAM = "8243677891:AAHdEtdsBTI2ALOrAc_uAPNwWxB5KUzWYHE"
 CHAT_ID = "6198642735"
 
@@ -18,12 +18,12 @@ def enviar_telegram(mensaje):
         r = requests.post(url, data=payload, timeout=15)
         res = r.json()
         if r.status_code == 200:
-            return True, "✅ ¡Reporte enviado!"
-        else:
-            return False, f"Error: {res.get('description')}"
-    except: return False, "Fallo de conexión"
+            return True, "✅ ¡Reporte enviado con éxito!"
+        return False, f"Telegram dice: {res.get('description', 'Error desconocido')}"
+    except Exception as e:
+        return False, f"Fallo de red: {str(e)}"
 
-@st.cache_data(ttl=2)
+@st.cache_data(ttl=1) # Forzamos a que no guarde basura en memoria
 def cargar_datos():
     try:
         url_excel = "https://1drv.ms/x/c/64349795a4386b5f/IQCy6Go7F7MRQ6da_vdajGNdAYBXgQ4-3_g-dg05l_mKDCQ?download=1"
@@ -41,41 +41,39 @@ if df is not None:
     
     for i, fila in df.iterrows():
         nombre = str(fila.iloc[2]) if len(fila) > 2 else ""
-        if any(x in nombre.upper() for x in ["NONE", "NAN", "APELLIDOS"]): continue
+        if any(x in nombre.upper() for x in ["NONE", "NAN", "APELLIDOS", "CEDULA"]): continue
             
         for col_idx, valor in enumerate(fila):
             nombre_col = str(df.columns[col_idx]).upper()
-            
-            # 🎯 BUSQUEDA ESPECÍFICA SEGÚN TU SOLICITUD
-            # Buscamos SOAT, TECNO, CONDUCCIÓN y evitamos LICENCIA DE TRÁNSITO
+            # 🎯 Buscamos SOAT, TECNO y CONDUCCIÓN
             if any(p in nombre_col for p in ["SOAT", "TECNO", "CONDUCCION"]):
                 try:
                     f_venc = pd.to_datetime(valor, errors='coerce', dayfirst=True)
-                    # Filtramos fechas reales (posteriores a 2010) y ya vencidas
+                    # Filtro: Año real (>2010) y que ya venció o vence hoy
                     if pd.notna(f_venc) and f_venc.year > 2010 and f_venc <= hoy:
                         alertas.append(f"• <b>{nombre}</b>: {nombre_col} ({f_venc.date()})")
                 except: continue
 
     if alertas:
-        st.subheader(f"⚠️ Documentos Vencidos ({len(alertas)}):")
+        st.subheader(f"⚠️ Documentos Vencidos Detectados ({len(alertas)}):")
         for a in alertas[:20]:
             st.write(a, unsafe_allow_html=True)
             
         if st.button("📲 ENVIAR REPORTE AL TELEGRAM"):
             reporte = "🚨 <b>NOVEDADES GUDMO 16</b>\n\n" + "\n".join(list(set(alertas)))
-            exito, mensaje = enviar_telegram(reporte)
-            if exito: st.success(mensaje)
-            else: st.error(f"❌ Telegram dice: {mensaje}")
+            exito, msj = enviar_telegram(reporte)
+            if exito: st.success(msj)
+            else: st.error(f"❌ {msj}")
     else:
-        st.info("🔎 No se encontraron SOAT, Tecno o Licencias de Conducción vencidas.")
-        # BOTÓN DE PRUEBA DE CONEXIÓN
-        if st.button("📡 PROBAR BOT"):
-            exito, msj = enviar_telegram("✅ El Bot Gudmo16 está conectado.")
-            if exito: st.success("¡Mensaje de prueba enviado!")
-            else: st.error(f"Sigue fallando: {msj}")
+        st.info("🔎 No se detectaron SOAT, Tecno o Licencias de Conducción vencidas.")
+
+    # BOTÓN DE EMERGENCIA PARA LIMPIAR TODO
+    if st.button("♻️ LIMPIAR MEMORIA DE LA APP"):
+        st.cache_data.clear()
+        st.rerun()
 
     st.divider()
     st.dataframe(df)
 else:
-    st.error("No hay conexión con el archivo de Excel.")
+    st.error("No se pudo conectar con el Excel.")
     
