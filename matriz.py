@@ -1,130 +1,117 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 import requests
+from datetime import date
 from io import BytesIO
 
-# 1. ESTILO DE ALTA TECNOLOGÍA (Neon Ops)
-st.set_page_config(page_title="GUDMO 16 - ELITE", layout="wide")
-st.markdown("""
-    <style>
-    .stApp { background-color: #050b14; color: #e0e6ed; }
-    .card {
-        padding: 15px; border-radius: 12px; margin-bottom: 10px;
-        background: rgba(255, 255, 255, 0.03);
-        border-left: 8px solid;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-    }
-    .vencido { border-left-color: #ff003c; }
-    .al-dia { border-left-color: #00ff9d; }
-    .stMetric { background: rgba(255,255,255,0.05); padding: 10px; border-radius: 10px; border: 1px solid #1f2937; }
-    </style>
-    """, unsafe_allow_html=True)
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Control Documentos", layout="wide")
 
-TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
+EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQCCZGsB1iWWSJAoFXkDTUhbAUamuiPdwJbuvD4YBw37ubc?download=1"
+
+TELEGRAM_TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
 CHAT_ID = "8081331013"
-URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQCCZGsB1iWWSJAoFXkDTUhbAUamuiPdwJbuvD4YBw37ubc?download=1"
 
-@st.cache_data(ttl=1)
-def cargar_datos_seguros():
+# ---------------- DESCARGA SEGURA ----------------
+@st.cache_data(ttl=300)  # evita romper conexión y mejora rendimiento
+def cargar_datos():
     try:
-        r = requests.get(URL, timeout=20)
-        # Cargamos todo el excel sin filtros iniciales para no perder nada
-        df = pd.read_excel(BytesIO(r.content), engine='openpyxl')
+        response = requests.get(EXCEL_URL, timeout=20)
+        response.raise_for_status()
+        file = BytesIO(response.content)
+
+        df = pd.read_excel(file, engine="openpyxl")
+
+        # Renombrar columnas
+        df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
+
+        # Limpiar filas inválidas
+        df = df.dropna(subset=["Nombre"])
+        df = df[df["Nombre"].astype(str).str.len() > 5]  # evita números o basura
+
         return df
-    except: return None
 
-# 2. PROCESAMIENTO DE DATOS
-df = cargar_datos_seguros()
+    except Exception as e:
+        st.error(f"Error cargando datos: {e}")
+        return pd.DataFrame()
 
-if df is not None:
-    hoy = pd.Timestamp(date.today())
-    
-    # Lista limpia de personal
-    personal_valido = []
-    vencidos_conteo = 0
+df = cargar_datos()
 
-    for i in range(len(df)):
-        fila = df.iloc[i]
-        nombre = str(fila.iloc[0]).strip().upper()
-        
-        # Saltamos lo que obviamente no es un nombre
-        if nombre in ["NAN", "NONE", ""] or nombre.replace('.','').isdigit() or "APELLIDOS" in nombre:
-            continue
-            
-        alertas = []
-        esta_vencido = False
-        
-        # Revisamos B(1), C(2) y D(3)
-        for tag, idx in [("LICENCIA", 1), ("TECNO", 2), ("SOAT", 3)]:
-            try:
-                f_val = pd.to_datetime(fila.iloc[idx], errors='coerce')
-                if pd.notna(f_val) and f_val.year > 2000:
-                    vence = f_val.date()
-                    vencido_doc = vence <= hoy.date()
-                    if vencido_doc: esta_vencido = True
-                    alertas.append({"tipo": tag, "fecha": vence, "vencido": vencido_doc})
-            except: continue
-        
-        # Solo agregamos si logramos leer al menos una fecha o nombre
-        personal_valido.append({"nombre": nombre, "docs": alertas, "es_vencido": esta_vencido})
-        if esta_vencido: vencidos_conteo += 1
+# ---------------- PROCESAMIENTO ----------------
+hoy = date.today()
 
-    # 3. INTERFAZ VISUAL
-    st.title("🛡️ COMMAND CENTER GUDMO 16")
-    
-    # Métricas
-    c1, c2, c3 = st.columns(3)
-    c1.metric("UNIFORMADOS", len(personal_valido))
-    c2.metric("VENCIDOS", vencidos_conteo, delta=f"{vencidos_conteo} ALERTAS", delta_color="inverse")
-    c3.metric("AL DÍA", len(personal_valido) - vencidos_conteo)
+def estado(fecha):
+    if pd.isna(fecha):
+        return "SIN DATO", "gray"
+    if fecha.date() <= hoy:
+        return "VENCIDO", "red"
+    return "AL DÍA", "green"
 
-    st.divider()
-    
-    # Buscador
-    busqueda = st.text_input("🔍 FILTRAR POR NOMBRE O APELLIDO").upper()
+vencidos = []
 
-    # Tarjetas
-    col_izq, col_der = st.columns(2)
-    mostrados = 0
+total = len(df)
+total_vencidos = 0
 
-    for p in personal_valido:
-        if busqueda and busqueda not in p["nombre"]: continue
-        
-        mostrados += 1
-        clase = "vencido" if p["es_vencido"] else "al-dia"
-        emoji = "🔴" if p["es_vencido"] else "🟢"
-        
-        with (col_izq if mostrados % 2 != 0 else col_der):
-            html = f'<div class="card {clase}"><b>{emoji} {p["nombre"]}</b><br>'
-            for d in p["docs"]:
-                color = "#ff4b4b" if d["vencido"] else "#00ff9d"
-                html += f'<span style="color:{color}">• {d["tipo"]}: {d["fecha"]}</span><br>'
-            html += '</div>'
-            st.markdown(html, unsafe_allow_html=True)
+# ---------------- MÉTRICAS ----------------
+col1, col2, col3 = st.columns(3)
 
-    # 4. BOTÓN TELEGRAM (SIEMPRE DISPONIBLE)
-    st.sidebar.title("📤 REPORTE")
-    if st.sidebar.button("🚀 ENVIAR A TELEGRAM"):
-        txt = f"🚨 *GUDMO 16: CONTROL DE VENCIMIENTOS*\n📅 *Fecha:* {hoy.date()}\n\n"
-        hay_rojos = False
-        for p in personal_valido:
-            if p["es_vencido"]:
-                hay_rojos = True
-                txt += f"👤 *{p['nombre']}*\n"
-                for d in p["docs"]:
-                    if d["vencido"]: txt += f"  ❌ {d['tipo']}: {d['fecha']}\n"
-                txt += "\n"
-        
-        if not hay_rojos: txt += "✅ TODO EL PERSONAL AL DÍA."
-        
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
-                      data={"chat_id": CHAT_ID, "text": txt, "parse_mode": "Markdown"})
-        st.sidebar.success("Enviado al grupo")
-        st.balloons()
+with col1:
+    st.metric("Total Personal", total)
 
-    if mostrados == 0 and len(personal_valido) > 0:
-        st.info("No se encontraron resultados para esa búsqueda.")
-else:
-    st.error("❌ ERROR CRÍTICO DE CONEXIÓN CON EL EXCEL.")
-    
+# ---------------- TARJETAS ----------------
+st.markdown("## 📋 Estado de Documentos")
+
+for _, row in df.iterrows():
+    licencia_estado, licencia_color = estado(row["Licencia"])
+    tecno_estado, tecno_color = estado(row["Tecnomecanica"])
+    soat_estado, soat_color = estado(row["SOAT"])
+
+    if "VENCIDO" in [licencia_estado, tecno_estado, soat_estado]:
+        total_vencidos += 1
+        vencidos.append(row["Nombre"])
+
+    with st.container():
+        st.markdown(f"""
+        <div style="background-color:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px">
+            <h4 style="color:white">{row['Nombre']}</h4>
+            <p style="color:{licencia_color}">Licencia: {licencia_estado}</p>
+            <p style="color:{tecno_color}">Tecnomecánica: {tecno_estado}</p>
+            <p style="color:{soat_color}">SOAT: {soat_estado}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ---------------- MÉTRICAS FINALES ----------------
+with col2:
+    st.metric("Vencidos", total_vencidos)
+
+with col3:
+    st.metric("Al Día", total - total_vencidos)
+
+# ---------------- TELEGRAM ----------------
+def enviar_telegram(lista):
+    if not lista:
+        return "No hay vencidos 🎉"
+
+    mensaje = "*🚨 DOCUMENTOS VENCIDOS*\n\n"
+    for nombre in lista:
+        mensaje += f"- {nombre}\n"
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": mensaje,
+        "parse_mode": "Markdown"
+    }
+
+    r = requests.post(url, data=payload)
+    return r.status_code
+
+# ---------------- BOTÓN ----------------
+if st.button("📩 Enviar reporte a Telegram"):
+    resultado = enviar_telegram(vencidos)
+
+    if resultado == 200:
+        st.success("Reporte enviado correctamente ✅")
+    else:
+        st.error("Error enviando el reporte ❌")
