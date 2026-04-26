@@ -7,7 +7,7 @@ from io import BytesIO
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Control DEI2 GUDMO 16", layout="wide")
 
-# ✅ TOKEN NUEVO DE TU CAPTURA DE PANTALLA
+# ✅ TOKEN NUEVO DE TU ÚLTIMA CAPTURA (BotFather 21:24)
 TOKEN_TELEGRAM = "8243677891:AAHdEtdsBTI2ALOrAc_uAPNwWxB5KUzWYHE"
 CHAT_ID = "6198642735"
 
@@ -18,11 +18,10 @@ def enviar_telegram(mensaje):
         r = requests.post(url, data=payload, timeout=15)
         res = r.json()
         if r.status_code == 200:
-            return True, "✅ ¡Reporte enviado con éxito!"
+            return True, "✅ ¡Reporte enviado!"
         else:
-            return False, f"Error: {res.get('description')}"
-    except:
-        return False, "Error de conexión"
+            return False, f"Telegram dice: {res.get('description')}"
+    except: return False, "Fallo de conexión"
 
 @st.cache_data(ttl=5)
 def cargar_datos():
@@ -31,8 +30,7 @@ def cargar_datos():
         response = requests.get(url_excel)
         df = pd.read_excel(BytesIO(response.content))
         return df
-    except:
-        return None
+    except: return None
 
 st.title("🛡️ Control Documentación DEI2 Gudmo 16")
 
@@ -43,7 +41,7 @@ if df is not None:
     alertas_encontradas = []
     
     for i, fila in df.iterrows():
-        # Extraer nombre del uniformado
+        # Extraer nombre (Columna 3 del Excel)
         nombre = str(fila.iloc[2]) if len(fila) > 2 else ""
         if any(x in nombre.upper() for x in ["NONE", "NAN", "APELLIDOS", "CEDULA"]):
             continue
@@ -51,31 +49,36 @@ if df is not None:
         for col_idx, valor in enumerate(fila):
             nombre_col = str(df.columns[col_idx]).upper()
             
-            # 🎯 BUSQUEDA FILTRADA POR TUS REQUERIMIENTOS
+            # 🎯 BUSQUEDA EXACTA: SOAT, TECNO Y CONDUCCIÓN
+            # Agregamos 'VENCE' para capturar cualquier columna de vencimiento
             if any(p in nombre_col for p in ["SOAT", "TECNO", "CONDUCCION", "VENCE"]):
                 try:
                     f_venc = pd.to_datetime(valor, errors='coerce', dayfirst=True)
-                    # Filtramos fechas reales (posteriores a 1990) y vencidas
-                    if pd.notna(f_venc) and f_venc.year > 1990 and f_venc <= hoy:
+                    
+                    # FILTRO CRÍTICO: Solo fechas válidas (posteriores a 2000) y que ya vencieron
+                    if pd.notna(f_venc) and f_venc.year > 2000 and f_venc <= hoy:
                         alertas_encontradas.append(f"• <b>{nombre}</b>: {nombre_col} ({f_venc.date()})")
                 except:
                     continue
 
     if alertas_encontradas:
-        st.subheader(f"⚠️ Se detectaron {len(alertas_encontradas)} vencimientos (SOAT, Tecno, Conducción):")
-        for alerta in alertas_encontradas[:15]:
+        st.subheader(f"⚠️ Se detectaron {len(alertas_encontradas)} vencimientos:")
+        # Mostrar listado en la app para verificar
+        for alerta in alertas_encontradas[:20]:
             st.write(alerta, unsafe_allow_html=True)
             
-        if st.button("📲 ENVIAR REPORTE COMPLETO AL TELEGRAM"):
-            reporte = "🚨 <b>NOVEDADES GUDMO 16</b>\n\n" + "\n".join(list(set(alertas_encontradas)))
+        if st.button("📲 ENVIAR ESTE REPORTE AL TELEGRAM"):
+            reporte = "🚨 <b>NOVEDADES GUDMO 16</b>\n\n" + "\n".join(list(set(alertas_encontradas))[:30])
             exito, mensaje = enviar_telegram(reporte)
             if exito: st.success(mensaje)
             else: st.error(f"❌ {mensaje}")
     else:
-        st.info("🔎 No hay SOAT, Tecno o Licencias de Conducción vencidas hoy.")
+        st.info("🔎 No se encontraron SOAT, Tecno o Licencias de Conducción vencidas hoy.")
+        # Botón de auxilio por si el Token falla
+        if st.button("📡 Probar conexión (Enviar Saludo)"):
+            enviar_telegram("✅ El bot está conectado correctamente.")
 
     st.divider()
     st.dataframe(df)
 else:
-    st.error("No se pudo conectar con el Excel.")
-    
+    st.error("No se pudo conectar con el Excel en OneDrive.")
