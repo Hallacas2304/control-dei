@@ -3,13 +3,13 @@ import pandas as pd
 import requests
 from datetime import date
 from io import BytesIO
+import zipfile
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="DEI Control", layout="wide", initial_sidebar_state="collapsed")
 
 EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
 
-# TELEGRAM
 try:
     TELEGRAM_TOKEN = st.secrets["TOKEN"]
     CHAT_ID = st.secrets["CHAT_ID"]
@@ -20,13 +20,12 @@ except:
 
 hoy = date.today()
 
-# ---------------- ESTILO TECH ----------------
+# ---------------- ESTILO ----------------
 st.markdown("""
 <style>
 html, body {
     background: radial-gradient(circle at 20% 20%, #0b1220, #020617);
     color: #e2e8f0;
-    font-family: 'Segoe UI', sans-serif;
 }
 
 .card {
@@ -35,7 +34,6 @@ html, body {
     padding: 15px;
     border-radius: 16px;
     margin-bottom: 10px;
-    box-shadow: 0 0 15px rgba(0,255,255,0.05);
 }
 
 .rojo { color:#ff4d4d; font-weight:bold; }
@@ -51,7 +49,7 @@ html, body {
 }
 
 #MainMenu, footer, header {visibility:hidden;}
-.block-container {padding-top:1rem;padding-bottom:1rem;}
+.block-container {padding-top:1rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -59,58 +57,51 @@ html, body {
 @st.cache_data(ttl=120)
 def cargar():
     r = requests.get(EXCEL_URL, timeout=20)
-    r.raise_for_status()
-
     df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
+
     df.columns = df.columns.str.strip().str.lower()
 
-    nombre = next((c for c in df.columns if "nombre" in c), None)
-    licencia = next((c for c in df.columns if "licencia" in c), None)
-    tecno = next((c for c in df.columns if "tecno" in c), None)
-    soat = next((c for c in df.columns if "soat" in c), None)
+    nombre = next(c for c in df.columns if "nombre" in c)
+    licencia = next(c for c in df.columns if "licencia" in c)
+    tecno = next(c for c in df.columns if "tecno" in c)
+    soat = next(c for c in df.columns if "soat" in c)
 
     df = df[[nombre, licencia, tecno, soat]]
     df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
 
-    for col in df.columns[1:]:
-        df[col] = pd.to_datetime(df[col], errors="coerce")
+    for c in ["Licencia", "Tecnomecanica", "SOAT"]:
+        df[c] = pd.to_datetime(df[c], errors="coerce")
 
-    return df.dropna(subset=["Nombre"])
+    return df
 
 df = cargar()
 
+# ---------------- SESSION STATE ----------------
+if "soportes" not in st.session_state:
+    st.session_state.soportes = {}
+
 # ---------------- FUNCION ----------------
-def evaluar(fecha):
+def estado(fecha):
     if pd.isna(fecha):
         return "COMUNICADO OFICIAL", "amarillo"
-
     dias = (fecha.date() - hoy).days
-
     if dias < 0:
         return f"VENCIDO ({fecha.date()})", "rojo"
     elif dias <= 5:
         return f"PRÓXIMO ({fecha.date()})", "amarillo"
-    else:
-        return f"AL DÍA ({fecha.date()})", "verde"
+    return f"AL DÍA ({fecha.date()})", "verde"
 
 # ---------------- TELEGRAM ----------------
-def enviar_telegram(lista):
+def enviar(lista):
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        return False, "TOKEN o CHAT_ID no configurados"
+        return False, "Telegram no configurado"
 
-    if not lista:
-        return False, "No hay datos para enviar"
+    msg = "🚨 *DOCUMENTOS VENCIDOS*\n\n" + "\n".join(lista)
 
-    mensaje = "*🚨 DOCUMENTOS VENCIDOS*\n\n"
-    mensaje += "\n".join(f"- {x}" for x in lista)
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-
-    r = requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "Markdown"
-    })
+    r = requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+    )
 
     return (True, "Enviado") if r.status_code == 200 else (False, r.text)
 
@@ -119,137 +110,133 @@ menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Ed
 
 # ---------------- INICIO ----------------
 if menu == "🏠 Inicio":
-
     st.title("🚓 Control Documental")
 
-    for _, row in df.iterrows():
-        lic_e, lic_c = evaluar(row["Licencia"])
-        tec_e, tec_c = evaluar(row["Tecnomecanica"])
-        soa_e, soa_c = evaluar(row["SOAT"])
+    for i, row in df.iterrows():
 
-        badge = ""
-        if lic_e == "COMUNICADO OFICIAL" and tec_e == "COMUNICADO OFICIAL" and soa_e == "COMUNICADO OFICIAL":
-            badge = '<span class="oficial">COMUNICADO OFICIAL</span>'
+        nombre = row["Nombre"]
 
-        st.markdown(f"""
-        <div class="card">
-            <b>{row['Nombre']}</b> {badge}<br>
-            Licencia: <span class="{lic_c}">{lic_e}</span><br>
-            Tecnomecánica: <span class="{tec_c}">{tec_e}</span><br>
-            SOAT: <span class="{soa_c}">{soa_e}</span>
-        </div>
-        """, unsafe_allow_html=True)
+        lic, lic_c = estado(row["Licencia"])
+        tec, tec_c = estado(row["Tecnomecanica"])
+        soa, soa_c = estado(row["SOAT"])
+
+        if nombre not in st.session_state.soportes:
+            st.session_state.soportes[nombre] = {
+                "visible": False,
+                "files": []
+            }
+
+        col1, col2 = st.columns([3,1])
+
+        with col1:
+            st.markdown(f"""
+            <div class="card">
+                <b>{nombre}</b><br>
+                Licencia: <span class="{lic_c}">{lic}</span><br>
+                Tecno: <span class="{tec_c}">{tec}</span><br>
+                SOAT: <span class="{soa_c}">{soa}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col2:
+            vis = st.checkbox("👁️ Soportes", key=f"v_{i}")
+            st.session_state.soportes[nombre]["visible"] = vis
+
+        # 📎 SOPORTES
+        if st.session_state.soportes[nombre]["visible"]:
+
+            files = st.file_uploader(
+                "📎 Subir fotocopias",
+                accept_multiple_files=True,
+                key=f"f_{i}"
+            )
+
+            if files:
+                st.session_state.soportes[nombre]["files"] = files
+
+            if st.session_state.soportes[nombre]["files"]:
+
+                zip_buffer = BytesIO()
+
+                with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                    for f in st.session_state.soportes[nombre]["files"]:
+                        zipf.writestr(f.name, f.getvalue())
+
+                st.download_button(
+                    "⬇️ Descargar soportes",
+                    zip_buffer.getvalue(),
+                    file_name=f"{nombre}_soportes.zip"
+                )
 
 # ---------------- ALERTAS ----------------
 if menu == "🚨 Alertas":
 
-    def estado_texto(fecha):
-        if pd.isna(fecha):
-            return "⚪ COMUNICADO OFICIAL"
-        dias = (fecha.date() - hoy).days
-        if dias < 0:
-            return f"🔴 VENCIDO ({fecha.date()})"
-        elif dias <= 5:
-            return f"🟡 PRÓXIMO ({fecha.date()})"
-        else:
-            return f"🟢 AL DÍA ({fecha.date()})"
+    df2 = df.copy()
 
-    df_alertas = df.copy()
-    df_alertas["Licencia"] = df_alertas["Licencia"].apply(estado_texto)
-    df_alertas["Tecnomecanica"] = df_alertas["Tecnomecanica"].apply(estado_texto)
-    df_alertas["SOAT"] = df_alertas["SOAT"].apply(estado_texto)
+    for c in ["Licencia", "Tecnomecanica", "SOAT"]:
+        df2[c] = df2[c].apply(lambda x: estado(x)[0])
 
-    tab1, tab2, tab3 = st.tabs(["SOAT", "Tecnomecánica", "Licencia"])
-
-    with tab1:
-        st.dataframe(df_alertas[["Nombre", "SOAT"]], use_container_width=True)
-    with tab2:
-        st.dataframe(df_alertas[["Nombre", "Tecnomecanica"]], use_container_width=True)
-    with tab3:
-        st.dataframe(df_alertas[["Nombre", "Licencia"]], use_container_width=True)
+    st.dataframe(df2, use_container_width=True)
 
 # ---------------- DASHBOARD ----------------
 if menu == "📊 Dashboard":
 
     st.bar_chart(pd.DataFrame({
-        "Tipo":["SOAT","Tecno","Licencia"],
-        "Cantidad":[
-            len(df[df["SOAT"].dt.date <= hoy]),
-            len(df[df["Tecnomecanica"].dt.date <= hoy]),
-            len(df[df["Licencia"].dt.date <= hoy])
+        "Tipo": ["SOAT", "Tecno", "Licencia"],
+        "Vencidos": [
+            (df["SOAT"] < pd.to_datetime(hoy)).sum(),
+            (df["Tecnomecanica"] < pd.to_datetime(hoy)).sum(),
+            (df["Licencia"] < pd.to_datetime(hoy)).sum()
         ]
     }).set_index("Tipo"))
 
-    # RESUMEN
-    st.subheader("📋 Resumen general")
+    st.subheader("📋 Resumen")
 
     resumen = []
-    for _, row in df.iterrows():
+    for _, r in df.iterrows():
         docs = []
 
-        if pd.notna(row["Licencia"]) and row["Licencia"].date() <= hoy:
+        if pd.notna(r["Licencia"]) and r["Licencia"].date() <= hoy:
             docs.append("Licencia")
-        if pd.notna(row["Tecnomecanica"]) and row["Tecnomecanica"].date() <= hoy:
-            docs.append("Tecnomecánica")
-        if pd.notna(row["SOAT"]) and row["SOAT"].date() <= hoy:
+        if pd.notna(r["Tecnomecanica"]) and r["Tecnomecanica"].date() <= hoy:
+            docs.append("Tecno")
+        if pd.notna(r["SOAT"]) and r["SOAT"].date() <= hoy:
             docs.append("SOAT")
 
-        if pd.isna(row["Licencia"]) and pd.isna(row["Tecnomecanica"]) and pd.isna(row["SOAT"]):
-            estado = "COMUNICADO OFICIAL"
-        elif docs:
-            estado = ", ".join(docs)
-        else:
-            estado = "AL DÍA"
+        estado_txt = "COMUNICADO OFICIAL" if len(docs) == 0 and pd.isna(r["Licencia"]) else (", ".join(docs) or "AL DÍA")
 
-        resumen.append({"Funcionario": row["Nombre"], "Estado": estado})
+        resumen.append({"Funcionario": r["Nombre"], "Estado": estado_txt})
 
     st.dataframe(pd.DataFrame(resumen), use_container_width=True)
 
-    # LISTADO OFICIAL
-    st.subheader("📢 Comunicado Oficial")
-    df_oficial = df[
-        df["Licencia"].isna() &
-        df["Tecnomecanica"].isna() &
-        df["SOAT"].isna()
-    ]
-
-    for _, row in df_oficial.iterrows():
-        st.markdown(f"""
-        <div class="card">
-            <b>{row['Nombre']}</b><br>
-            <span class="oficial">COMUNICADO OFICIAL</span>
-        </div>
-        """, unsafe_allow_html=True)
-
 # ---------------- EDITAR ----------------
 if menu == "✍️ Editar":
-    edit = st.data_editor(df)
+
+    edit = st.data_editor(df, use_container_width=True)
+
     buffer = BytesIO()
     edit.to_excel(buffer, index=False)
-    st.download_button("Descargar Excel", buffer.getvalue(), "editado.xlsx")
+
+    st.download_button("⬇️ Descargar Excel", buffer.getvalue(), "base.xlsx")
 
 # ---------------- AJUSTES ----------------
 if menu == "⚙️ Ajustes":
 
-    if st.button("Enviar reporte Telegram"):
+    if st.button("🚨 Enviar Telegram"):
         lista = []
 
-        for _, row in df.iterrows():
+        for _, r in df.iterrows():
             docs = []
 
-            if pd.notna(row["Licencia"]) and row["Licencia"].date() <= hoy:
+            if pd.notna(r["Licencia"]) and r["Licencia"].date() <= hoy:
                 docs.append("Licencia")
-            if pd.notna(row["Tecnomecanica"]) and row["Tecnomecanica"].date() <= hoy:
-                docs.append("Tecnomecánica")
-            if pd.notna(row["SOAT"]) and row["SOAT"].date() <= hoy:
+            if pd.notna(r["Tecnomecanica"]) and r["Tecnomecanica"].date() <= hoy:
+                docs.append("Tecno")
+            if pd.notna(r["SOAT"]) and r["SOAT"].date() <= hoy:
                 docs.append("SOAT")
 
             if docs:
-                lista.append(f"{row['Nombre']} → {', '.join(docs)}")
+                lista.append(f"{r['Nombre']} → {', '.join(docs)}")
 
-        ok, msg = enviar_telegram(lista)
-
-        if ok:
-            st.success(msg)
-        else:
-            st.error(msg)
+        ok, msg = enviar(lista)
+        st.success(msg) if ok else st.error(msg)
