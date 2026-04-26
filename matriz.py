@@ -9,8 +9,14 @@ st.set_page_config(page_title="DEI Control", layout="wide", initial_sidebar_stat
 
 EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
 
-TELEGRAM_TOKEN = st.secrets.get("TOKEN", "")
-CHAT_ID = st.secrets.get("CHAT_ID", "")
+# TELEGRAM
+try:
+    TELEGRAM_TOKEN = st.secrets["TOKEN"]
+    CHAT_ID = st.secrets["CHAT_ID"]
+except:
+    TELEGRAM_TOKEN = ""
+    CHAT_ID = ""
+    st.warning("⚠️ Telegram no configurado")
 
 hoy = date.today()
 
@@ -23,17 +29,17 @@ html, body {background-color:#0f172a;color:white;}
 .amarillo {color:#f59e0b;font-weight:bold;}
 .verde {color:#22c55e;font-weight:bold;}
 #MainMenu, footer, header {visibility:hidden;}
+.block-container {padding-top:1rem;padding-bottom:1rem;}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------- CARGA ----------------
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=120)
 def cargar():
     r = requests.get(EXCEL_URL, timeout=20)
     r.raise_for_status()
 
     df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
-
     df.columns = df.columns.str.strip().str.lower()
 
     nombre = next((c for c in df.columns if "nombre" in c), None)
@@ -51,18 +57,21 @@ def cargar():
 
 df = cargar()
 
-# ---------------- FUNCIONES ----------------
+# ---------------- FUNCION ----------------
 def evaluar(fecha):
     if pd.isna(fecha):
-        return "VACÍO", "amarillo"
-    dias = (fecha.date() - hoy).days
-    if dias < 0:
-        return "VENCIDO", "rojo"
-    elif dias <= 5:
-        return f"{dias} días", "amarillo"
-    return "AL DÍA", "verde"
+        return "COMUNICADO OFICIAL", "amarillo"
 
-# ---------------- TELEGRAM FIX ----------------
+    dias = (fecha.date() - hoy).days
+
+    if dias < 0:
+        return f"VENCIDO ({fecha.date()})", "rojo"
+    elif dias <= 5:
+        return f"PRÓXIMO ({fecha.date()})", "amarillo"
+    else:
+        return f"AL DÍA ({fecha.date()})", "verde"
+
+# ---------------- TELEGRAM ----------------
 def enviar_telegram(lista):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return False, "TOKEN o CHAT_ID no configurados"
@@ -75,20 +84,16 @@ def enviar_telegram(lista):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    try:
-        r = requests.post(url, data={
-            "chat_id": CHAT_ID,
-            "text": mensaje,
-            "parse_mode": "Markdown"
-        })
+    r = requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": mensaje,
+        "parse_mode": "Markdown"
+    })
 
-        if r.status_code == 200:
-            return True, "Mensaje enviado correctamente"
-        else:
-            return False, r.text
-
-    except Exception as e:
-        return False, str(e)
+    if r.status_code == 200:
+        return True, "Mensaje enviado correctamente"
+    else:
+        return False, r.text
 
 # ---------------- MENU ----------------
 menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Editar", "⚙️ Ajustes"], horizontal=True)
@@ -98,24 +103,14 @@ if menu == "🏠 Inicio":
 
     st.title("🚓 Control Documental")
 
-    vencidos_lista = []
-
     for _, row in df.iterrows():
         lic_e, lic_c = evaluar(row["Licencia"])
         tec_e, tec_c = evaluar(row["Tecnomecanica"])
         soa_e, soa_c = evaluar(row["SOAT"])
 
-        docs = []
-        if "VENCIDO" in lic_e: docs.append("Licencia")
-        if "VENCIDO" in tec_e: docs.append("Tecnomecánica")
-        if "VENCIDO" in soa_e: docs.append("SOAT")
-
-        if docs:
-            vencidos_lista.append(f"{row['Nombre']} → {', '.join(docs)}")
-
         st.markdown(f"""
         <div class="card">
-            <span class="{lic_c}"><b>{row['Nombre']}</b></span><br>
+            <b>{row['Nombre']}</b><br>
             Licencia: <span class="{lic_c}">{lic_e}</span><br>
             Tecnomecánica: <span class="{tec_c}">{tec_e}</span><br>
             SOAT: <span class="{soa_c}">{soa_e}</span>
@@ -124,10 +119,40 @@ if menu == "🏠 Inicio":
 
 # ---------------- ALERTAS ----------------
 if menu == "🚨 Alertas":
-    st.tabs(["SOAT", "Tecno", "Licencia"])
+
+    st.subheader("🚨 Estado detallado")
+
+    def estado_texto(fecha):
+        if pd.isna(fecha):
+            return "⚪ COMUNICADO OFICIAL"
+        dias = (fecha.date() - hoy).days
+        if dias < 0:
+            return f"🔴 VENCIDO ({fecha.date()})"
+        elif dias <= 5:
+            return f"🟡 PRÓXIMO ({fecha.date()})"
+        else:
+            return f"🟢 AL DÍA ({fecha.date()})"
+
+    df_alertas = df.copy()
+
+    df_alertas["Licencia"] = df_alertas["Licencia"].apply(estado_texto)
+    df_alertas["Tecnomecanica"] = df_alertas["Tecnomecanica"].apply(estado_texto)
+    df_alertas["SOAT"] = df_alertas["SOAT"].apply(estado_texto)
+
+    tab1, tab2, tab3 = st.tabs(["SOAT", "Tecnomecánica", "Licencia"])
+
+    with tab1:
+        st.dataframe(df_alertas[["Nombre", "SOAT"]], use_container_width=True)
+
+    with tab2:
+        st.dataframe(df_alertas[["Nombre", "Tecnomecanica"]], use_container_width=True)
+
+    with tab3:
+        st.dataframe(df_alertas[["Nombre", "Licencia"]], use_container_width=True)
 
 # ---------------- DASHBOARD ----------------
 if menu == "📊 Dashboard":
+
     st.bar_chart(pd.DataFrame({
         "Tipo":["SOAT","Tecno","Licencia"],
         "Cantidad":[
@@ -139,6 +164,7 @@ if menu == "📊 Dashboard":
 
 # ---------------- EDITAR ----------------
 if menu == "✍️ Editar":
+
     edit = st.data_editor(df)
     buffer = BytesIO()
     edit.to_excel(buffer, index=False)
@@ -147,9 +173,7 @@ if menu == "✍️ Editar":
 # ---------------- AJUSTES ----------------
 if menu == "⚙️ Ajustes":
 
-    st.subheader("📩 Telegram")
-
-    if st.button("Enviar reporte completo"):
+    if st.button("Enviar reporte Telegram"):
         lista = []
 
         for _, row in df.iterrows():
@@ -170,4 +194,4 @@ if menu == "⚙️ Ajustes":
         if ok:
             st.success(msg)
         else:
-            st.error(f"❌ Error Telegram: {msg}")
+            st.error(msg)
