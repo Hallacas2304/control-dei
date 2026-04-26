@@ -6,7 +6,7 @@ from io import BytesIO
 import zipfile
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="DEI Control", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="DEI Control", layout="wide")
 
 EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
 
@@ -16,227 +16,198 @@ try:
 except:
     TELEGRAM_TOKEN = ""
     CHAT_ID = ""
-    st.warning("⚠️ Telegram no configurado")
 
 hoy = date.today()
 
-# ---------------- ESTILO ----------------
+# ---------------- ESTILO NUEVO MÁS LIMPIO ----------------
 st.markdown("""
 <style>
-html, body {
-    background: radial-gradient(circle at 20% 20%, #0b1220, #020617);
-    color: #e2e8f0;
+body {
+    background: #0f172a;
+    color: #e5e7eb;
 }
 
 .card {
-    background: linear-gradient(145deg, #0f172a, #020617);
-    border: 1px solid #1e293b;
-    padding: 15px;
-    border-radius: 16px;
-    margin-bottom: 10px;
+    background: #111827;
+    border: 1px solid #1f2937;
+    padding: 16px;
+    border-radius: 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
 }
 
-.rojo { color:#ff4d4d; font-weight:bold; }
-.amarillo { color:#facc15; font-weight:bold; }
-.verde { color:#22c55e; font-weight:bold; }
+.nombre {
+    font-size: 18px;
+    font-weight: 700;
+    color: #93c5fd;
+}
 
-.oficial {
-    background: linear-gradient(90deg, #1e3a8a, #06b6d4);
-    color: white;
-    padding: 4px 10px;
-    border-radius: 8px;
-    font-size: 12px;
+.badge-rojo { color:#ef4444; font-weight:bold; }
+.badge-amarillo { color:#fbbf24; font-weight:bold; }
+.badge-verde { color:#22c55e; font-weight:bold; }
+
+.topbar {
+    background:#0b1220;
+    padding:10px;
+    border-radius:10px;
+    margin-bottom:15px;
 }
 
 #MainMenu, footer, header {visibility:hidden;}
-.block-container {padding-top:1rem;}
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------- CARGA ----------------
 @st.cache_data(ttl=120)
 def cargar():
-    r = requests.get(EXCEL_URL, timeout=20)
+    r = requests.get(EXCEL_URL)
     df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
 
     df.columns = df.columns.str.strip().str.lower()
 
     nombre = next(c for c in df.columns if "nombre" in c)
-    licencia = next(c for c in df.columns if "licencia" in c)
-    tecno = next(c for c in df.columns if "tecno" in c)
+    lic = next(c for c in df.columns if "licencia" in c)
+    tec = next(c for c in df.columns if "tecno" in c)
     soat = next(c for c in df.columns if "soat" in c)
 
-    df = df[[nombre, licencia, tecno, soat]]
-    df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
+    df = df[[nombre, lic, tec, soat]]
+    df.columns = ["Nombre", "Licencia", "Tecno", "SOAT"]
 
-    for c in ["Licencia", "Tecnomecanica", "SOAT"]:
+    for c in ["Licencia", "Tecno", "SOAT"]:
         df[c] = pd.to_datetime(df[c], errors="coerce")
 
     return df
 
 df = cargar()
 
-# ---------------- SESSION STATE ----------------
+# ---------------- STATE SOPORTES ----------------
 if "soportes" not in st.session_state:
     st.session_state.soportes = {}
 
-# ---------------- FUNCION ----------------
+# ---------------- FUNCION ESTADO ----------------
 def estado(fecha):
     if pd.isna(fecha):
-        return "COMUNICADO OFICIAL", "amarillo"
+        return "COMUNICADO", "badge-amarillo"
     dias = (fecha.date() - hoy).days
     if dias < 0:
-        return f"VENCIDO ({fecha.date()})", "rojo"
+        return "VENCIDO", "badge-rojo"
     elif dias <= 5:
-        return f"PRÓXIMO ({fecha.date()})", "amarillo"
-    return f"AL DÍA ({fecha.date()})", "verde"
-
-# ---------------- TELEGRAM ----------------
-def enviar(lista):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        return False, "Telegram no configurado"
-
-    msg = "🚨 *DOCUMENTOS VENCIDOS*\n\n" + "\n".join(lista)
-
-    r = requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-    )
-
-    return (True, "Enviado") if r.status_code == 200 else (False, r.text)
+        return "PRÓXIMO", "badge-amarillo"
+    return "AL DÍA", "badge-verde"
 
 # ---------------- MENU ----------------
-menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Editar", "⚙️ Ajustes"], horizontal=True)
+menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Excel", "⚙️ Ajustes"], horizontal=True)
 
-# ---------------- INICIO ----------------
+# ================== INICIO (BUSCADOR + ALERTAS) ==================
 if menu == "🏠 Inicio":
-    st.title("🚓 Control Documental")
 
-    for i, row in df.iterrows():
+    st.markdown('<div class="topbar">🔎 Buscar funcionario o ver alertas críticas</div>', unsafe_allow_html=True)
+
+    busqueda = st.text_input("Buscar nombre (opcional)")
+
+    df_view = df.copy()
+
+    # 🔥 detectar alertas
+    def es_alerta(row):
+        for c in ["Licencia", "Tecno", "SOAT"]:
+            if pd.notna(row[c]) and row[c].date() <= hoy:
+                return True
+        return False
+
+    df_view["ALERTA"] = df_view.apply(es_alerta, axis=1)
+
+    # FILTRO
+    if busqueda:
+        df_view = df_view[df_view["Nombre"].str.contains(busqueda, case=False)]
+    else:
+        df_view = df_view[df_view["ALERTA"] == True]  # SOLO ALERTAS EN INICIO
+
+    for i, row in df_view.iterrows():
+
+        lic, lic_c = estado(row["Licencia"])
+        tec, tec_c = estado(row["Tecno"])
+        soa, soa_c = estado(row["SOAT"])
 
         nombre = row["Nombre"]
 
-        lic, lic_c = estado(row["Licencia"])
-        tec, tec_c = estado(row["Tecnomecanica"])
-        soa, soa_c = estado(row["SOAT"])
-
         if nombre not in st.session_state.soportes:
-            st.session_state.soportes[nombre] = {
-                "visible": False,
-                "files": []
-            }
+            st.session_state.soportes[nombre] = []
 
-        col1, col2 = st.columns([3,1])
+        st.markdown(f"""
+        <div class="card">
+            <div class="nombre">{nombre}</div>
+            Licencia: <span class="{lic_c}">{lic}</span><br>
+            Tecno: <span class="{tec_c}">{tec}</span><br>
+            SOAT: <span class="{soa_c}">{soa}</span>
+        </div>
+        """, unsafe_allow_html=True)
 
-        with col1:
-            st.markdown(f"""
-            <div class="card">
-                <b>{nombre}</b><br>
-                Licencia: <span class="{lic_c}">{lic}</span><br>
-                Tecno: <span class="{tec_c}">{tec}</span><br>
-                SOAT: <span class="{soa_c}">{soa}</span>
-            </div>
-            """, unsafe_allow_html=True)
+        # 📎 BOTÓN SIEMPRE FRENTE AL FUNCIONARIO
+        files = st.file_uploader(
+            f"📎 Subir documentos para {nombre}",
+            accept_multiple_files=True,
+            key=f"file_{i}"
+        )
 
-        with col2:
-            vis = st.checkbox("👁️ Soportes", key=f"v_{i}")
-            st.session_state.soportes[nombre]["visible"] = vis
+        if files:
+            st.session_state.soportes[nombre] = files
 
-        # 📎 SOPORTES
-        if st.session_state.soportes[nombre]["visible"]:
+        # 📦 descarga
+        if st.session_state.soportes.get(nombre):
 
-            files = st.file_uploader(
-                "📎 Subir fotocopias",
-                accept_multiple_files=True,
-                key=f"f_{i}"
+            zip_buffer = BytesIO()
+
+            with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                for f in st.session_state.soportes[nombre]:
+                    zipf.writestr(f.name, f.getvalue())
+
+            st.download_button(
+                "⬇️ Descargar soportes",
+                zip_buffer.getvalue(),
+                file_name=f"{nombre}_soportes.zip"
             )
 
-            if files:
-                st.session_state.soportes[nombre]["files"] = files
-
-            if st.session_state.soportes[nombre]["files"]:
-
-                zip_buffer = BytesIO()
-
-                with zipfile.ZipFile(zip_buffer, "w") as zipf:
-                    for f in st.session_state.soportes[nombre]["files"]:
-                        zipf.writestr(f.name, f.getvalue())
-
-                st.download_button(
-                    "⬇️ Descargar soportes",
-                    zip_buffer.getvalue(),
-                    file_name=f"{nombre}_soportes.zip"
-                )
-
-# ---------------- ALERTAS ----------------
+# ================== ALERTAS ==================
 if menu == "🚨 Alertas":
 
-    df2 = df.copy()
+    st.subheader("🚨 Funcionarios con vencimientos")
 
-    for c in ["Licencia", "Tecnomecanica", "SOAT"]:
-        df2[c] = df2[c].apply(lambda x: estado(x)[0])
+    for _, r in df.iterrows():
 
-    st.dataframe(df2, use_container_width=True)
+        for c in ["Licencia", "Tecno", "SOAT"]:
+            if pd.notna(r[c]) and r[c].date() <= hoy:
 
-# ---------------- DASHBOARD ----------------
+                st.error(f"{r['Nombre']} → {c} VENCIDO / PRÓXIMO")
+
+# ================== DASHBOARD ==================
 if menu == "📊 Dashboard":
 
     st.bar_chart(pd.DataFrame({
         "Tipo": ["SOAT", "Tecno", "Licencia"],
         "Vencidos": [
             (df["SOAT"] < pd.to_datetime(hoy)).sum(),
-            (df["Tecnomecanica"] < pd.to_datetime(hoy)).sum(),
+            (df["Tecno"] < pd.to_datetime(hoy)).sum(),
             (df["Licencia"] < pd.to_datetime(hoy)).sum()
         ]
     }).set_index("Tipo"))
 
-    st.subheader("📋 Resumen")
+# ================== EXCEL (OCULTAR COLUMNAS) ==================
+if menu == "✍️ Excel":
 
-    resumen = []
-    for _, r in df.iterrows():
-        docs = []
+    st.subheader("📁 Edición avanzada")
 
-        if pd.notna(r["Licencia"]) and r["Licencia"].date() <= hoy:
-            docs.append("Licencia")
-        if pd.notna(r["Tecnomecanica"]) and r["Tecnomecanica"].date() <= hoy:
-            docs.append("Tecno")
-        if pd.notna(r["SOAT"]) and r["SOAT"].date() <= hoy:
-            docs.append("SOAT")
+    ocultar = st.multiselect("Ocultar columnas", df.columns.tolist())
 
-        estado_txt = "COMUNICADO OFICIAL" if len(docs) == 0 and pd.isna(r["Licencia"]) else (", ".join(docs) or "AL DÍA")
+    df_show = df.drop(columns=ocultar)
 
-        resumen.append({"Funcionario": r["Nombre"], "Estado": estado_txt})
-
-    st.dataframe(pd.DataFrame(resumen), use_container_width=True)
-
-# ---------------- EDITAR ----------------
-if menu == "✍️ Editar":
-
-    edit = st.data_editor(df, use_container_width=True)
+    edit = st.data_editor(df_show, use_container_width=True)
 
     buffer = BytesIO()
     edit.to_excel(buffer, index=False)
 
     st.download_button("⬇️ Descargar Excel", buffer.getvalue(), "base.xlsx")
 
-# ---------------- AJUSTES ----------------
+# ================== AJUSTES ==================
 if menu == "⚙️ Ajustes":
 
-    if st.button("🚨 Enviar Telegram"):
-        lista = []
-
-        for _, r in df.iterrows():
-            docs = []
-
-            if pd.notna(r["Licencia"]) and r["Licencia"].date() <= hoy:
-                docs.append("Licencia")
-            if pd.notna(r["Tecnomecanica"]) and r["Tecnomecanica"].date() <= hoy:
-                docs.append("Tecno")
-            if pd.notna(r["SOAT"]) and r["SOAT"].date() <= hoy:
-                docs.append("SOAT")
-
-            if docs:
-                lista.append(f"{r['Nombre']} → {', '.join(docs)}")
-
-        ok, msg = enviar(lista)
-        st.success(msg) if ok else st.error(msg)
+    st.info("Sistema listo para expansión (Telegram / BD / login)")
