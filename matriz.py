@@ -20,7 +20,7 @@ CHAT_ID = "8081331013"
 def cargar_datos():
     try:
         url = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQD9M-2uLoxfRJ_8eU_nrvxoAepaaMdolPGx0pEaYQUqMBo?download=1"
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=15)
         return pd.read_excel(BytesIO(r.content), header=None)
     except:
         return None
@@ -31,55 +31,57 @@ if df is not None:
     hoy = pd.Timestamp(date.today())
     reporte_final = []
 
-    # --- ESCANEO AUTOMÁTICO ---
+    # RECORRIDO CELDA POR CELDA (Para no fallar puntería)
     for i in range(len(df)):
         fila = df.iloc[i]
         nombre = str(fila[0]).strip().upper()
         
-        # Saltamos basura y encabezados
-        if len(nombre) < 5 or nombre.isdigit() or "NAN" in nombre:
+        # Filtro para solo procesar filas con nombres de funcionarios
+        if len(nombre) < 5 or "NAN" in nombre or nombre.isdigit() or "APELLIDOS" in nombre:
             continue
 
-        alertas_usuario = []
+        alertas_funcionario = []
         
-        # REVISAMOS TODA LA FILA BUSCANDO FECHAS (Escaneo inteligente)
-        for idx, valor in enumerate(fila):
+        # Revisamos desde la columna 1 en adelante buscando fechas
+        for idx in range(1, len(fila)):
+            valor = fila[idx]
             if pd.notna(valor) and not isinstance(valor, str):
                 try:
                     f = pd.to_datetime(valor, errors='coerce')
-                    # Filtro: Solo fechas lógicas (Año > 2024 para evitar el error 1970)
-                    if pd.notna(f) and f.year > 2024:
+                    # Filtro de seguridad: Solo años actuales (evita el 1970)
+                    if pd.notna(f) and 2024 < f.year < 2030:
                         if f <= hoy:
-                            # Identificamos el tipo por la posición relativa
-                            tipo = "LICENCIA" if idx < 3 else ("TECNO" if idx < 6 else "SOAT")
-                            alertas_usuario.append(f"🚨 {tipo} VENCIDO: {f.date()}")
+                            # Detectar qué documento es según la posición
+                            tipo = "LICENCIA" if idx == 1 else ("TECNO" if idx == 2 else "SOAT")
+                            alertas_funcionario.append(f"🚨 {tipo} VENCIDO ({f.date()})")
                 except:
                     continue
 
-        if alertas_usuario:
-            reporte_final.append(f"👤 *{nombre}*\n" + "\n".join(alertas_usuario))
+        if alertas_funcionario:
+            reporte_final.append(f"👤 *{nombre}*\n" + "\n".join(alertas_funcionario))
 
-    # --- INTERFAZ ---
+    # --- PANTALLA ---
     st.title("🛡️ DETECCIÓN DE INFRACTORES GUDMO 16")
     
     if not reporte_final:
-        st.success("✅ No se detectaron documentos vencidos hoy.")
+        st.info("No se detectaron documentos vencidos. Verifica que las fechas en el Excel estén en formato de fecha (DD/MM/AAAA).")
     else:
         for r in reporte_final:
             st.markdown(f'<div class="card-vencido">{r.replace("*", "").replace("\n", "<br>")}</div>', unsafe_allow_html=True)
 
-    # --- BOTÓN TELEGRAM (RESTAURADO AL 100%) ---
+    # --- TELEGRAM ---
     if st.button("🚀 ENVIAR REPORTE A TELEGRAM", use_container_width=True):
         if reporte_final:
             mensaje = "🚨 *NOTIFICACIÓN VENCIMIENTOS GUDMO 16*\n\n" + "\n\n".join(reporte_final)
             try:
-                requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", 
-                             data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"})
-                st.success("✅ Enviado a Telegram")
+                res = requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", 
+                                    data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"})
+                if res.status_code == 200: st.success("✅ Enviado")
+                else: st.error(f"Error TG: {res.status_code}")
             except:
-                st.error("Fallo al enviar")
+                st.error("Error de conexión")
         else:
-            st.warning("Nada que reportar")
+            st.warning("Nada que enviar")
 else:
-    st.error("Error al leer el archivo.")
+    st.error("No se pudo cargar el archivo.")
     
