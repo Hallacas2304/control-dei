@@ -1,64 +1,23 @@
-import streamlit as st
-import pandas as pd
-import requests
-from datetime import date
-from io import BytesIO
+EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
 
-st.set_page_config(page_title="Control Documentos", layout="wide")
-
-EXCEL_URL = "TU_LINK_AQUI"
-
-# ---------------- CARGAR Y LIMPIAR ----------------
 @st.cache_data(ttl=300)
-def cargar_y_limpiar():
-    try:
-        response = requests.get(EXCEL_URL, timeout=20)
-        response.raise_for_status()
+def cargar_datos():
+    import requests
+    from io import BytesIO
+    import pandas as pd
 
-        file = BytesIO(response.content)
+    response = requests.get(EXCEL_URL, timeout=20)
+    response.raise_for_status()
 
-        df = pd.read_excel(file, engine="openpyxl", header=None)
+    file = BytesIO(response.content)
 
-        # 🔥 FILTRAR FILAS QUE REALMENTE TENGAN NOMBRES
-        df = df[df[0].astype(str).str.contains(" ", na=False)]
+    df = pd.read_excel(file, engine="openpyxl")
 
-        # Tomar solo primeras 4 columnas
-        df = df.iloc[:, :4].copy()
+    # ya viene limpio
+    df = df[["Nombre", "Licencia", "Tecnomecanica", "SOAT"]]
 
-        df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
+    # fechas
+    for col in ["Licencia", "Tecnomecanica", "SOAT"]:
+        df[col] = pd.to_datetime(df[col], errors="coerce")
 
-        # Convertir fechas (aunque estén mal)
-        for col in ["Licencia", "Tecnomecanica", "SOAT"]:
-            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-
-        # Eliminar filas completamente vacías
-        df = df.dropna(subset=["Nombre"])
-
-        return df
-
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return pd.DataFrame()
-
-df = cargar_y_limpiar()
-
-# ---------------- MOSTRAR ----------------
-st.subheader("📊 Datos limpios")
-st.dataframe(df)
-
-# ---------------- CREAR EXCEL NUEVO ----------------
-def generar_excel(df):
-    output = BytesIO()
-    df.to_excel(output, index=False, engine="openpyxl")
-    output.seek(0)
-    return output
-
-if not df.empty:
-    excel_file = generar_excel(df)
-
-    st.download_button(
-        label="📥 Descargar Excel limpio",
-        data=excel_file,
-        file_name="documentos_limpios.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    return df
