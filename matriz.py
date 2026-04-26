@@ -3,127 +3,134 @@ import pandas as pd
 import requests
 from datetime import date
 from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
 
-st.set_page_config(page_title="Control Documentos", layout="wide")
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Sistema DEI", layout="wide")
 
-EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
+EXCEL_URL = "TU_LINK"
 
-TELEGRAM_TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
-CHAT_ID = "8081331013"
+# 🔐 secretos
+TELEGRAM_TOKEN = st.secrets["TOKEN"]
+CHAT_ID = st.secrets["CHAT_ID"]
 
-# ---------------- CARGA ROBUSTA ----------------
-def cargar_datos():
-    try:
-        response = requests.get(EXCEL_URL, timeout=20)
+# ---------------- LOGIN ----------------
+def login():
+    st.title("🔐 Acceso al Sistema")
 
-        # 🔥 DEBUG CLAVE
-        st.write("Status code:", response.status_code)
-        st.write("Content-Type:", response.headers.get("Content-Type"))
+    user = st.text_input("Usuario")
+    password = st.text_input("Contraseña", type="password")
 
-        if "html" in response.headers.get("Content-Type", ""):
-            st.error("❌ SharePoint está devolviendo una página web, no el Excel.")
-            st.info("👉 Debes configurar el archivo como 'Cualquiera con el enlace puede ver'")
-            return pd.DataFrame()
+    if st.button("Ingresar"):
+        if user == "admin" and password == "1234":
+            st.session_state["login"] = True
+        else:
+            st.error("Credenciales incorrectas")
 
-        file = BytesIO(response.content)
+if "login" not in st.session_state:
+    st.session_state["login"] = False
 
-        df = pd.read_excel(file, engine="openpyxl")
+if not st.session_state["login"]:
+    login()
+    st.stop()
 
-        st.success("✅ Excel cargado correctamente")
+# ---------------- CARGA ----------------
+@st.cache_data(ttl=300)
+def cargar():
+    r = requests.get(EXCEL_URL)
+    file = BytesIO(r.content)
+    df = pd.read_excel(file, engine="openpyxl")
 
-        # Ver columnas reales
-        st.write("Columnas detectadas:", df.columns.tolist())
+    df = df[[
+        next(c for c in df.columns if "nombre" in c.lower()),
+        next(c for c in df.columns if "licencia" in c.lower()),
+        next(c for c in df.columns if "tecno" in c.lower()),
+        next(c for c in df.columns if "soat" in c.lower())
+    ]]
 
-        # Intentar seleccionar columnas correctas
-        columnas = [c.lower() for c in df.columns]
+    df.columns = ["Nombre","Licencia","Tecnomecanica","SOAT"]
 
-        nombre_col = next((c for c in df.columns if "nombre" in c.lower()), None)
-        lic_col = next((c for c in df.columns if "licencia" in c.lower()), None)
-        tec_col = next((c for c in df.columns if "tecno" in c.lower()), None)
-        soat_col = next((c for c in df.columns if "soat" in c.lower()), None)
+    for col in df.columns[1:]:
+        df[col] = pd.to_datetime(df[col], errors="coerce")
 
-        if not all([nombre_col, lic_col, tec_col, soat_col]):
-            st.error("❌ No se encontraron las columnas necesarias")
-            return pd.DataFrame()
+    return df
 
-        df = df[[nombre_col, lic_col, tec_col, soat_col]].copy()
-        df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
+df = cargar()
 
-        for col in ["Licencia", "Tecnomecanica", "SOAT"]:
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-
-        df = df.dropna(subset=["Nombre"])
-
-        return df
-
-    except Exception as e:
-        st.error(f"🔥 Error real: {e}")
-        return pd.DataFrame()
-
-df = cargar_datos()
-
-# ---------------- LÓGICA ----------------
 hoy = date.today()
 
-def estado(fecha):
-    if pd.isna(fecha):
-        return "SIN DATO", "gray"
-    if fecha.date() <= hoy:
-        return "VENCIDO", "red"
-    return "AL DÍA", "green"
+# ---------------- SIDEBAR ----------------
+menu = st.sidebar.selectbox("Menú", ["Dashboard", "Reportes", "Configuración"])
 
-vencidos = []
-total_vencidos = 0
+# ---------------- LÓGICA ----------------
+def vencido(fecha):
+    return pd.notna(fecha) and fecha.date() <= hoy
 
-# ---------------- MÉTRICAS ----------------
-total = len(df)
+# ---------------- DASHBOARD ----------------
+if menu == "Dashboard":
+    st.title("🚓 Control Documental")
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Total Personal", total)
+    vencidos = df[
+        df["Licencia"].apply(vencido) |
+        df["Tecnomecanica"].apply(vencido) |
+        df["SOAT"].apply(vencido)
+    ]
 
-st.markdown("## 📋 Estado de Documentos")
+    col1, col2 = st.columns(2)
+    col1.metric("Total", len(df))
+    col2.metric("Vencidos", len(vencidos))
 
-for _, row in df.iterrows():
-    lic_e, lic_c = estado(row["Licencia"])
-    tec_e, tec_c = estado(row["Tecnomecanica"])
-    soa_e, soa_c = estado(row["SOAT"])
+    st.dataframe(vencidos)
 
-    if "VENCIDO" in [lic_e, tec_e, soa_e]:
-        total_vencidos += 1
-        vencidos.append(row["Nombre"])
+# ---------------- PDF ----------------
+def generar_pdf(lista):
+    doc = SimpleDocTemplate("reporte.pdf")
+    styles = getSampleStyleSheet()
 
-    st.markdown(f"""
-    <div style="background:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px">
-        <b>{row['Nombre']}</b><br>
-        <span style="color:{lic_c}">Licencia: {lic_e}</span><br>
-        <span style="color:{tec_c}">Tecnomecánica: {tec_e}</span><br>
-        <span style="color:{soa_c}">SOAT: {soa_e}</span>
-    </div>
-    """, unsafe_allow_html=True)
+    content = [Paragraph("REPORTE DE DOCUMENTOS VENCIDOS", styles["Title"])]
 
-col2.metric("Vencidos", total_vencidos)
-col3.metric("Al Día", total - total_vencidos)
+    for nombre in lista:
+        content.append(Paragraph(nombre, styles["Normal"]))
+
+    doc.build(content)
+
+    with open("reporte.pdf", "rb") as f:
+        return f.read()
+
+# ---------------- REPORTES ----------------
+if menu == "Reportes":
+    st.title("📄 Reportes")
+
+    vencidos = df[
+        df["Licencia"].apply(vencido) |
+        df["Tecnomecanica"].apply(vencido) |
+        df["SOAT"].apply(vencido)
+    ]
+
+    lista = vencidos["Nombre"].tolist()
+
+    if st.button("📥 Descargar PDF"):
+        pdf = generar_pdf(lista)
+        st.download_button("Descargar", pdf, file_name="reporte.pdf")
 
 # ---------------- TELEGRAM ----------------
-def enviar_telegram(lista):
-    if not lista:
-        return False, "No hay vencidos"
-
-    mensaje = "*🚨 DOCUMENTOS VENCIDOS*\n\n"
-    for nombre in lista:
-        mensaje += f"- {nombre}\n"
+def enviar(lista):
+    mensaje = "*🚨 REPORTE OFICIAL*\n\n"
+    mensaje += "\n".join(f"- {n}" for n in lista)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
-    payload = {
+    requests.post(url, data={
         "chat_id": CHAT_ID,
         "text": mensaje,
         "parse_mode": "Markdown"
-    }
+    })
 
-    r = requests.post(url, data=payload)
-    return r.json()
+if menu == "Configuración":
+    st.title("⚙️ Configuración")
 
-if st.button("📩 Enviar reporte a Telegram"):
-    resp = enviar_telegram(vencidos)
-    st.write(resp)
+    if st.button("📩 Enviar reporte ahora"):
+        lista = df["Nombre"].tolist()
+        enviar(lista)
+        st.success("Enviado")
