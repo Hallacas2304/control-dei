@@ -5,10 +5,10 @@ import requests
 from io import BytesIO
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Control DEI2 GUDMO 16", layout="wide")
+st.set_page_config(page_title="Control GUDMO 16", layout="wide")
 
-# 🚨 TOKEN VERIFICADO DE TU CAPTURA DE BOTFATHER
-TOKEN_TELEGRAM = "8243677891:AAHdEtdsBTI2ALOrAc_uAPNwWxB5KUzWYHE"
+# ✅ TU NUEVO TOKEN EXTRAÍDO DE LA IMAGEN (9:02 AM)
+TOKEN_TELEGRAM = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
 CHAT_ID = "6198642735"
 
 def enviar_telegram(mensaje):
@@ -16,14 +16,12 @@ def enviar_telegram(mensaje):
     payload = {"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "HTML"}
     try:
         r = requests.post(url, data=payload, timeout=15)
-        res = r.json()
         if r.status_code == 200:
             return True, "✅ ¡Reporte enviado con éxito!"
-        return False, f"Telegram dice: {res.get('description', 'Error desconocido')}"
-    except Exception as e:
-        return False, f"Fallo de red: {str(e)}"
+        return False, f"Error: {r.json().get('description')}"
+    except: return False, "Fallo de conexión"
 
-@st.cache_data(ttl=1) # Forzamos a que no guarde basura en memoria
+@st.cache_data(ttl=1)
 def cargar_datos():
     try:
         url_excel = "https://1drv.ms/x/c/64349795a4386b5f/IQCy6Go7F7MRQ6da_vdajGNdAYBXgQ4-3_g-dg05l_mKDCQ?download=1"
@@ -45,19 +43,19 @@ if df is not None:
             
         for col_idx, valor in enumerate(fila):
             nombre_col = str(df.columns[col_idx]).upper()
-            # 🎯 Buscamos SOAT, TECNO y CONDUCCIÓN
+            
+            # Filtro: SOAT, TECNO y CONDUCCIÓN
             if any(p in nombre_col for p in ["SOAT", "TECNO", "CONDUCCION"]):
                 try:
                     f_venc = pd.to_datetime(valor, errors='coerce', dayfirst=True)
-                    # Filtro: Año real (>2010) y que ya venció o vence hoy
+                    # Solo fechas reales y vencidas
                     if pd.notna(f_venc) and f_venc.year > 2010 and f_venc <= hoy:
                         alertas.append(f"• <b>{nombre}</b>: {nombre_col} ({f_venc.date()})")
                 except: continue
 
     if alertas:
-        st.subheader(f"⚠️ Documentos Vencidos Detectados ({len(alertas)}):")
-        for a in alertas[:20]:
-            st.write(a, unsafe_allow_html=True)
+        st.subheader(f"⚠️ Vencimientos Detectados ({len(alertas)}):")
+        for a in alertas[:20]: st.write(a, unsafe_allow_html=True)
             
         if st.button("📲 ENVIAR REPORTE AL TELEGRAM"):
             reporte = "🚨 <b>NOVEDADES GUDMO 16</b>\n\n" + "\n".join(list(set(alertas)))
@@ -65,10 +63,9 @@ if df is not None:
             if exito: st.success(msj)
             else: st.error(f"❌ {msj}")
     else:
-        st.info("🔎 No se detectaron SOAT, Tecno o Licencias de Conducción vencidas.")
+        st.info("🔎 Todo al día en SOAT, Tecno y Licencias.")
 
-    # BOTÓN DE EMERGENCIA PARA LIMPIAR TODO
-    if st.button("♻️ LIMPIAR MEMORIA DE LA APP"):
+    if st.button("♻️ RECARGAR DATOS"):
         st.cache_data.clear()
         st.rerun()
 
