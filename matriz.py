@@ -4,131 +4,127 @@ from datetime import date
 import requests
 from io import BytesIO
 
-# 1. CONFIGURACIÓN DE ALTA TECNOLOGÍA
-st.set_page_config(page_title="SISTEMA GUDMO 16 - ELITE", layout="wide")
-
+# 1. ESTILO DE ALTA TECNOLOGÍA (Neon Ops)
+st.set_page_config(page_title="GUDMO 16 - ELITE", layout="wide")
 st.markdown("""
     <style>
-    /* Fondo y tipografía */
     .stApp { background-color: #050b14; color: #e0e6ed; }
-    
-    /* Tarjetas con efecto neón */
     .card {
-        padding: 20px;
-        border-radius: 15px;
-        margin-bottom: 15px;
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        padding: 15px; border-radius: 12px; margin-bottom: 10px;
+        background: rgba(255, 255, 255, 0.03);
+        border-left: 8px solid;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.4);
     }
-    .vencido { border-right: 5px solid #ff003c; border-left: 5px solid #ff003c; box-shadow: inset 0 0 10px #ff003c33; }
-    .al-dia { border-right: 5px solid #00ff9d; border-left: 5px solid #00ff9d; box-shadow: inset 0 0 10px #00ff9d33; }
-    
-    /* Botones tecnológicos */
-    .stButton>button {
-        width: 100%;
-        background: linear-gradient(45deg, #004e92, #000428);
-        color: white;
-        border: 1px solid #00d4ff;
-        border-radius: 10px;
-        font-weight: bold;
-        transition: 0.3s;
-    }
-    .stButton>button:hover { box-shadow: 0 0 20px #00d4ff; transform: scale(1.02); }
+    .vencido { border-left-color: #ff003c; }
+    .al-dia { border-left-color: #00ff9d; }
+    .stMetric { background: rgba(255,255,255,0.05); padding: 10px; border-radius: 10px; border: 1px solid #1f2937; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. MOTOR DE DATOS
 TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
 CHAT_ID = "8081331013"
 URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQCCZGsB1iWWSJAoFXkDTUhbAUamuiPdwJbuvD4YBw37ubc?download=1"
 
 @st.cache_data(ttl=1)
-def cargar_master():
+def cargar_datos_seguros():
     try:
         r = requests.get(URL, timeout=20)
+        # Cargamos todo el excel sin filtros iniciales para no perder nada
         df = pd.read_excel(BytesIO(r.content), engine='openpyxl')
-        # Limpieza de encabezados y basura
-        df = df.dropna(subset=[df.columns[0]])
         return df
     except: return None
 
-# 3. INTERFAZ DE MANDO
-st.title("🛡️ COMMAND CENTER GUDMO 16")
-df = cargar_master()
+# 2. PROCESAMIENTO DE DATOS
+df = cargar_datos_seguros()
 
 if df is not None:
     hoy = pd.Timestamp(date.today())
     
-    # --- PANEL DE MÉTRICAS (GRÁFICAS RÁPIDAS) ---
-    vencidos_total = []
-    lista_final = []
-    
-    # Procesamiento previo para estadísticas
-    for _, fila in df.iterrows():
+    # Lista limpia de personal
+    personal_valido = []
+    vencidos_conteo = 0
+
+    for i in range(len(df)):
+        fila = df.iloc[i]
         nombre = str(fila.iloc[0]).strip().upper()
-        if "APELLIDOS" in nombre or nombre.replace('.','').isdigit(): continue
         
-        vencido = False
-        docs = []
+        # Saltamos lo que obviamente no es un nombre
+        if nombre in ["NAN", "NONE", ""] or nombre.replace('.','').isdigit() or "APELLIDOS" in nombre:
+            continue
+            
+        alertas = []
+        esta_vencido = False
+        
+        # Revisamos B(1), C(2) y D(3)
         for tag, idx in [("LICENCIA", 1), ("TECNO", 2), ("SOAT", 3)]:
-            f = pd.to_datetime(fila.iloc[idx], errors='coerce')
-            if pd.notna(f) and f.year > 2000:
-                is_v = f.date() <= hoy.date()
-                if is_v: vencido = True
-                docs.append({"tipo": tag, "fecha": f.date(), "status": is_v})
+            try:
+                f_val = pd.to_datetime(fila.iloc[idx], errors='coerce')
+                if pd.notna(f_val) and f_val.year > 2000:
+                    vence = f_val.date()
+                    vencido_doc = vence <= hoy.date()
+                    if vencido_doc: esta_vencido = True
+                    alertas.append({"tipo": tag, "fecha": vence, "vencido": vencido_doc})
+            except: continue
         
-        if docs:
-            item = {"nombre": nombre, "docs": docs, "vencido": vencido}
-            lista_final.append(item)
-            if vencido: vencidos_total.append(item)
+        # Solo agregamos si logramos leer al menos una fecha o nombre
+        personal_valido.append({"nombre": nombre, "docs": alertas, "es_vencido": esta_vencido})
+        if esta_vencido: vencidos_conteo += 1
 
-    # Mostrar métricas arriba
-    m1, m2, m3 = st.columns(3)
-    m1.metric("TOTAL PERSONAL", len(lista_final))
-    m2.metric("VENCIDOS", len(vencidos_total), delta=f"{len(vencidos_total)} ALERTAS", delta_color="inverse")
-    m3.metric("AL DÍA", len(lista_final) - len(vencidos_total))
-
-    # --- BUSCADOR Y FILTROS ---
-    st.divider()
-    busqueda = st.text_input("🔍 BUSCAR UNIFORMADO POR NOMBRE", placeholder="Ej: PEREZ...").upper()
-
-    # --- PANTALLA DE TARJETAS ---
-    c1, c2 = st.columns(2)
-    idx_col = 0
+    # 3. INTERFAZ VISUAL
+    st.title("🛡️ COMMAND CENTER GUDMO 16")
     
-    for persona in lista_final:
-        if busqueda and busqueda not in persona["nombre"]: continue
+    # Métricas
+    c1, c2, c3 = st.columns(3)
+    c1.metric("UNIFORMADOS", len(personal_valido))
+    c2.metric("VENCIDOS", vencidos_conteo, delta=f"{vencidos_conteo} ALERTAS", delta_color="inverse")
+    c3.metric("AL DÍA", len(personal_valido) - vencidos_conteo)
+
+    st.divider()
+    
+    # Buscador
+    busqueda = st.text_input("🔍 FILTRAR POR NOMBRE O APELLIDO").upper()
+
+    # Tarjetas
+    col_izq, col_der = st.columns(2)
+    mostrados = 0
+
+    for p in personal_valido:
+        if busqueda and busqueda not in p["nombre"]: continue
         
-        clase = "vencido" if persona["vencido"] else "al-dia"
-        emoji = "⚠️" if persona["vencido"] else "✅"
+        mostrados += 1
+        clase = "vencido" if p["es_vencido"] else "al-dia"
+        emoji = "🔴" if p["es_vencido"] else "🟢"
         
-        with (c1 if idx_col % 2 == 0 else c2):
-            html = f'<div class="card {clase}"><b>{emoji} {persona["nombre"]}</b><br><hr style="opacity:0.1">'
-            for d in persona["docs"]:
-                color = "#ff003c" if d["status"] else "#00ff9d"
+        with (col_izq if mostrados % 2 != 0 else col_der):
+            html = f'<div class="card {clase}"><b>{emoji} {p["nombre"]}</b><br>'
+            for d in p["docs"]:
+                color = "#ff4b4b" if d["vencido"] else "#00ff9d"
                 html += f'<span style="color:{color}">• {d["tipo"]}: {d["fecha"]}</span><br>'
             html += '</div>'
             st.markdown(html, unsafe_allow_html=True)
-        idx_col += 1
 
-    # --- PANEL DE TELEGRAM ---
-    st.sidebar.title("📤 REPORTE OFICIAL")
-    if st.sidebar.button("ENVIAR A TELEGRAM"):
-        msg = f"🚨 *GUDMO 16: CONTROL DE VENCIMIENTOS*\n📅 *Fecha:* {hoy.date()}\n\n"
-        if vencidos_total:
-            for v in vencidos_total:
-                msg += f"👤 *{v['nombre']}*\n"
-                for d in v['docs']:
-                    if d['status']: msg += f" ❌ {d['tipo']}: {d['fecha']}\n"
-                msg += "\n"
-        else:
-            msg += "✅ TODO EL PERSONAL SE ENCUENTRA AL DÍA."
+    # 4. BOTÓN TELEGRAM (SIEMPRE DISPONIBLE)
+    st.sidebar.title("📤 REPORTE")
+    if st.sidebar.button("🚀 ENVIAR A TELEGRAM"):
+        txt = f"🚨 *GUDMO 16: CONTROL DE VENCIMIENTOS*\n📅 *Fecha:* {hoy.date()}\n\n"
+        hay_rojos = False
+        for p in personal_valido:
+            if p["es_vencido"]:
+                hay_rojos = True
+                txt += f"👤 *{p['nombre']}*\n"
+                for d in p["docs"]:
+                    if d["vencido"]: txt += f"  ❌ {d['tipo']}: {d['fecha']}\n"
+                txt += "\n"
         
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-        st.sidebar.success("¡Enviado!")
+        if not hay_rojos: txt += "✅ TODO EL PERSONAL AL DÍA."
+        
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
+                      data={"chat_id": CHAT_ID, "text": txt, "parse_mode": "Markdown"})
+        st.sidebar.success("Enviado al grupo")
         st.balloons()
 
+    if mostrados == 0 and len(personal_valido) > 0:
+        st.info("No se encontraron resultados para esa búsqueda.")
 else:
-    st.error("SIN ACCESO A LA MATRIZ. REVISA EL ENLACE.")
+    st.error("❌ ERROR CRÍTICO DE CONEXIÓN CON EL EXCEL.")
     
