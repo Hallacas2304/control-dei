@@ -7,7 +7,7 @@ from io import BytesIO
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Control DEI2 GUDMO 16", layout="wide")
 
-# 🚨 TOKEN ACTUALIZADO SEGÚN TU ÚLTIMA FOTO
+# ✅ TOKEN NUEVO DE TU CAPTURA DE PANTALLA
 TOKEN_TELEGRAM = "8243677891:AAHdEtdsBTI2ALOrAc_uAPNwWxB5KUzWYHE"
 CHAT_ID = "6198642735"
 
@@ -34,7 +34,6 @@ def cargar_datos():
     except:
         return None
 
-# --- INTERFAZ ---
 st.title("🛡️ Control Documentación DEI2 Gudmo 16")
 
 df = cargar_datos()
@@ -43,46 +42,40 @@ if df is not None:
     hoy = pd.Timestamp(date.today())
     alertas_encontradas = []
     
-    # Buscamos en todas las celdas del Excel
     for i, fila in df.iterrows():
-        # Buscamos el nombre del uniformado (columna 3)
+        # Extraer nombre del uniformado
         nombre = str(fila.iloc[2]) if len(fila) > 2 else ""
         if any(x in nombre.upper() for x in ["NONE", "NAN", "APELLIDOS", "CEDULA"]):
             continue
             
         for col_idx, valor in enumerate(fila):
-            # Verificamos si la columna es de documentos
             nombre_col = str(df.columns[col_idx]).upper()
-            if any(p in nombre_col for p in ["SOAT", "TECNO", "LICENCIA", "VENCE"]):
+            
+            # 🎯 BUSQUEDA FILTRADA POR TUS REQUERIMIENTOS
+            if any(p in nombre_col for p in ["SOAT", "TECNO", "CONDUCCION", "VENCE"]):
                 try:
-                    # Forzamos la detección de la fecha
                     f_venc = pd.to_datetime(valor, errors='coerce', dayfirst=True)
-                    if pd.notna(f_venc) and f_venc <= hoy:
+                    # Filtramos fechas reales (posteriores a 1990) y vencidas
+                    if pd.notna(f_venc) and f_venc.year > 1990 and f_venc <= hoy:
                         alertas_encontradas.append(f"• <b>{nombre}</b>: {nombre_col} ({f_venc.date()})")
                 except:
                     continue
 
-    # --- BOTÓN DE ENVÍO ---
     if alertas_encontradas:
-        st.subheader(f"⚠️ Se detectaron {len(alertas_encontradas)} documentos vencidos:")
-        # Mostramos los primeros en la web para que veas que sí los encuentra
-        for alerta in alertas_encontradas[:10]:
+        st.subheader(f"⚠️ Se detectaron {len(alertas_encontradas)} vencimientos (SOAT, Tecno, Conducción):")
+        for alerta in alertas_encontradas[:15]:
             st.write(alerta, unsafe_allow_html=True)
             
-        if st.button("📲 ENVIAR ALERTAS AL TELEGRAM"):
-            reporte = "🚨 <b>NOVEDADES GUDMO 16</b>\n\n" + "\n".join(list(set(alertas_encontradas))[:25])
+        if st.button("📲 ENVIAR REPORTE COMPLETO AL TELEGRAM"):
+            reporte = "🚨 <b>NOVEDADES GUDMO 16</b>\n\n" + "\n".join(list(set(alertas_encontradas)))
             exito, mensaje = enviar_telegram(reporte)
             if exito: st.success(mensaje)
             else: st.error(f"❌ {mensaje}")
     else:
-        st.info("🔎 No se detectaron documentos vencidos hoy.")
-        # Botón de prueba para verificar que el nuevo Token funciona
-        if st.button("📡 PROBAR CONEXIÓN (Enviar Saludo)"):
-            enviar_telegram("✅ Conexión establecida con éxito.")
-            st.success("Revisa tu Telegram, te debió llegar un saludo.")
+        st.info("🔎 No hay SOAT, Tecno o Licencias de Conducción vencidas hoy.")
 
     st.divider()
     st.dataframe(df)
 else:
-    st.error("No se pudo conectar con el Excel de OneDrive.")
+    st.error("No se pudo conectar con el Excel.")
     
