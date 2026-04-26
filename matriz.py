@@ -4,8 +4,8 @@ from datetime import date
 import requests
 from io import BytesIO
 
-# --- CONFIGURACIÓN VISUAL ---
-st.set_page_config(page_title="GUDMO 16 - CONTROL PROFESIONAL", layout="wide")
+# --- CONFIGURACIÓN DE PANTALLA ---
+st.set_page_config(page_title="GUDMO 16 - LECTURA ACTIVA", layout="wide")
 st.markdown("""
     <style>
     .stApp { background-color: #0b0e14; color: #e0e0e0; }
@@ -21,79 +21,87 @@ CHAT_ID = "8081331013"
 def cargar_datos():
     try:
         url = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQD9M-2uLoxfRJ_8eU_nrvxoAepaaMdolPGx0pEaYQUqMBo?download=1"
-        r = requests.get(url, timeout=15)
-        return pd.read_excel(BytesIO(r.content), header=None)
-    except: return None
+        r = requests.get(url, timeout=20)
+        # Forzamos la lectura de todas las celdas como objetos para no perder datos
+        return pd.read_excel(BytesIO(r.content), header=None, engine='openpyxl')
+    except Exception as e:
+        st.error(f"Fallo de conexión con Excel: {e}")
+        return None
 
 df = cargar_datos()
 
 if df is not None:
     hoy = pd.Timestamp(date.today())
-    criticos = []      # Sin soporte
-    con_soporte = []   # Con comunicado oficial
+    criticos = []
+    con_soporte = []
 
+    # RECORRIDO DE FILAS
     for i in range(len(df)):
         fila = df.iloc[i]
-        nombre = str(fila[0]).strip().upper()
         
+        # 1. Identificar Nombre (Columna A)
+        nombre = str(fila[0]).strip().upper()
         if len(nombre) < 5 or "NAN" in nombre or nombre.isdigit() or "APELLIDOS" in nombre:
             continue
 
-        detalles = []
-        # Mapeo según tu matriz: B=1 (Licencia), C=2 (Tecno), D=3 (SOAT)
-        misiones = [("LICENCIA", 1), ("TECNOMECÁNICA", 2), ("SOAT", 3)]
+        alertas_txt = []
+        # 2. Revisar Fechas: Columna B(1)=Licencia, C(2)=Tecno, D(3)=SOAT
+        vencimientos = [("LICENCIA", 1), ("TECNOMECÁNICA", 2), ("SOAT", 3)]
         
-        for tipo, col_idx in misiones:
-            valor = fila[col_idx]
-            if pd.notna(valor) and not isinstance(valor, str):
-                try:
-                    f = pd.to_datetime(valor, errors='coerce')
-                    if pd.notna(f) and 2024 < f.year < 2035:
-                        if f <= hoy:
-                            detalles.append(f"• {tipo}: **{f.date()}**")
-                except: continue
+        for tipo, col in vencimientos:
+            try:
+                # Intentamos convertir a fecha ignorando errores de texto
+                fecha_val = pd.to_datetime(fila[col], errors='coerce', dayfirst=True)
+                
+                # Filtro de Seguridad: Solo años reales (2025-2030)
+                if pd.notna(fecha_val) and 2024 < fecha_val.year < 2032:
+                    if fecha_val <= hoy:
+                        alertas_txt.append(f"• {tipo}: **{fecha_val.date()}**")
+            except:
+                continue
 
-        if detalles:
-            # Columna N (índice 14) es el Comunicado
+        if alertas_txt:
+            # 3. Revisar Comunicado (Columna N = Índice 14)
             comunicado = str(fila[14]).strip().upper() if len(fila) > 14 else "NO APLICA"
-            tiene_oficio = comunicado != "NO APLICA" and "NAN" not in comunicado
+            tiene_oficio = "NO APLICA" not in comunicado and "NAN" not in comunicado and len(comunicado) > 3
             
-            info_txt = f"👤 **{nombre}**\n" + "\n".join(detalles)
+            info = f"👤 **{nombre}**\n" + "\n".join(alertas_txt)
             
             if tiene_oficio:
-                con_soporte.append(info_txt + f"\n\n📜 **COMUNICADO:** {comunicado}")
+                con_soporte.append(info + f"\n\n📜 **OFICIO:** {comunicado}")
             else:
-                criticos.append(info_txt)
+                criticos.append(info)
 
-    # --- INTERFAZ ---
-    st.title("🛡️ CONSOLA DE MANDO GUDMO 16")
+    # --- MOSTRAR RESULTADOS ---
+    st.title("🛡️ CONTROL DE VENCIMIENTOS GUDMO 16")
     
-    col1, col2 = st.columns(2)
+    if not criticos and not con_soporte:
+        st.warning("El archivo se leyó pero no se encontraron fechas vencidas con los filtros actuales.")
     
-    with col1:
-        st.subheader("🔴 ACCIÓN INMEDIATA (Sin Soporte)")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("🔴 SIN SOPORTE")
         for c in criticos:
             st.markdown(f'<div class="card-vencido">{c.replace("\n", "<br>")}</div>', unsafe_allow_html=True)
             
-    with col2:
-        st.subheader("🔵 CASOS CON COMUNICADO OFICIAL")
+    with c2:
+        st.subheader("🔵 CON COMUNICADO")
         for s in con_soporte:
             st.markdown(f'<div class="card-comunicado">{s.replace("\n", "<br>")}</div>', unsafe_allow_html=True)
 
     # --- TELEGRAM ---
-    if st.button("🚀 ENVIAR REPORTE CATEGORIZADO A TELEGRAM", use_container_width=True):
+    if st.button("🚀 ENVIAR A TELEGRAM", use_container_width=True):
         if criticos or con_soporte:
-            msg = "🚨 *REPORTE DE VENCIMIENTOS GUDMO 16*\n\n"
+            msg = "🚨 *REPORTE GUDMO 16*\n\n"
             if criticos:
-                msg += "*❌ SIN SOPORTE (URGENTE):*\n" + "\n\n".join(criticos) + "\n\n"
+                msg += "*❌ SIN SOPORTE:*\n" + "\n\n".join(criticos) + "\n\n"
             if con_soporte:
-                msg += "*ℹ️ CON TRÁMITE / OFICIO:*\n" + "\n\n".join(con_soporte)
+                msg += "*ℹ️ CON OFICIO:*\n" + "\n\n".join(con_soporte)
             
-            res = requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", 
-                                data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-            if res.status_code == 200: st.success("✅ Enviado")
-        else:
-            st.warning("No hay datos")
+            requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", 
+                          data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
+            st.success("Enviado")
+
 else:
-    st.error("Error al conectar.")
+    st.error("No hay lectura del Excel. Verifica que el enlace sea público.")
     
