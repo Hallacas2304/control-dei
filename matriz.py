@@ -1,12 +1,11 @@
 import streamlit as st
-import pd as pd # Usamos alias estándar
 import pandas as pd
 from datetime import date
 import requests
 from io import BytesIO
 
-# --- CONFIGURACIÓN VISUAL (LA QUE TE GUSTA) ---
-st.set_page_config(page_title="GUDMO 16 - CONTROL TOTAL", layout="wide")
+# --- 1. CONFIGURACIÓN VISUAL ---
+st.set_page_config(page_title="GUDMO 16 - CONTROL FINAL", layout="wide")
 
 st.markdown("""
     <style>
@@ -22,7 +21,7 @@ st.markdown("""
 TOKEN_TELEGRAM = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
 CHAT_ID = "8081331013"
 
-@st.cache_data(ttl=1) # Actualización casi instantánea
+@st.cache_data(ttl=1)
 def cargar_datos():
     try:
         url = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQD9M-2uLoxfRJ_8eU_nrvxoAepaaMdolPGx0pEaYQUqMBo?download=1"
@@ -35,61 +34,64 @@ df = cargar_datos()
 
 if df is not None:
     hoy = pd.Timestamp(date.today())
-    # Lista para Telegram - LA CLAVE QUE SE HABÍA DAÑADO
-    lista_para_telegram = []
+    infractores_lista = []
 
-    # --- PROCESAMIENTO ---
+    # --- 2. PROCESAMIENTO SIN ERRORES ---
     for i in range(len(df)):
         fila = df.iloc[i]
         nombre = str(fila[0]).strip().upper()
         
-        # Filtro de nombres: Si es muy corto o es un número, saltar
-        if len(nombre) < 5 or nombre.isdigit() or "NAN" in nombre:
+        # Filtro: Ignorar si no es un nombre real o es encabezado
+        if len(nombre) < 5 or nombre.isdigit() or "NAN" in nombre or "APELLIDOS" in nombre:
             continue
 
-        detalles_vencidos = []
+        alertas_txt = []
         
-        # Escaneo de columnas de fechas (1, 2, 3 según tu Excel)
+        # Columnas B(1), C(2), D(3) para Licencia, Tecno y SOAT
         for idx in [1, 2, 3]:
             valor = fila[idx]
             if pd.notna(valor) and not isinstance(valor, str):
                 try:
                     f = pd.to_datetime(valor, errors='coerce')
-                    # FILTRO ANTI-1970: Solo fechas de este año en adelante
-                    if pd.notna(f) and f.year >= 2025:
+                    # Filtro Año > 2024 para eliminar el error 1970
+                    if pd.notna(f) and f.year > 2024:
                         if f <= hoy:
                             tipo = "LICENCIA" if idx == 1 else ("TECNO" if idx == 2 else "SOAT")
-                            detalles_vencidos.append(f"🚨 {tipo} VENCIDO: {f.date()}")
+                            alertas_txt.append(f"🚨 {tipo} VENCIDO: {f.date()}")
                 except:
                     continue
 
-        if detalles_vencidos:
-            texto_persona = f"👤 *{nombre}*\n" + "\n".join(detalles_vencidos)
-            lista_para_telegram.append(texto_persona)
+        if alertas_txt:
+            info_final = f"👤 *{nombre}*\n" + "\n".join(alertas_txt)
+            infractores_lista.append(info_final)
 
-    # --- PANTALLA ---
+    # --- 3. INTERFAZ ---
     st.title("🛡️ DETECCIÓN DE INFRACTORES GUDMO 16")
-    
-    if not lista_para_telegram:
-        st.info("No se detectaron documentos vencidos hoy.")
+    st.write(f"Fecha de verificación: {hoy.date()}")
+
+    if not infractores_lista:
+        st.success("✅ No se detectaron documentos vencidos hoy.")
     else:
-        for item in lista_para_telegram:
+        for item in infractores_lista:
+            # Mostramos en pantalla (limpiando los asteriscos de Markdown)
             st.markdown(f'<div class="card-vencido">{item.replace("*", "").replace("\n", "<br>")}</div>', unsafe_allow_html=True)
 
-    # --- BOTÓN DE TELEGRAM (RESTAURADO) ---
+    # --- 4. TELEGRAM (EL QUE FUNCIONA) ---
     if st.button("🚀 ENVIAR REPORTE A TELEGRAM", use_container_width=True):
-        if lista_para_telegram:
-            mensaje_completo = "🚨 *NOTIFICACIÓN GUDMO 16*\n\n" + "\n\n".join(lista_para_telegram)
+        if infractores_lista:
+            mensaje = "🚨 *NOTIFICACIÓN GUDMO 16*\n\n" + "\n\n".join(infractores_lista)
             
-            url_api = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
-            res = requests.post(url_api, data={"chat_id": CHAT_ID, "text": mensaje_completo, "parse_mode": "Markdown"})
-            
-            if res.status_code == 200:
-                st.success("✅ Reporte enviado a Telegram correctamente.")
-            else:
-                st.error(f"Error de envío: {res.status_code}")
+            try:
+                res = requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", 
+                                    data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"})
+                if res.status_code == 200:
+                    st.success("✅ Reporte enviado a Telegram.")
+                else:
+                    st.error(f"Error Telegram: {res.status_code}")
+            except:
+                st.error("No hay conexión con Telegram.")
         else:
-            st.warning("No hay nada que reportar.")
+            st.warning("Nada que reportar.")
 else:
-    st.error("Error al conectar con el archivo Excel.")
-        
+    st.error("No se pudo cargar el archivo desde SharePoint.")
+    
