@@ -4,7 +4,6 @@ import requests
 from datetime import date
 from io import BytesIO
 
-# ---------------- CONFIG ----------------
 st.set_page_config(page_title="Control Documentos", layout="wide")
 
 EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
@@ -12,32 +11,43 @@ EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela
 TELEGRAM_TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
 CHAT_ID = "8081331013"
 
-# ---------------- ESTILO OSCURO ----------------
-st.markdown("""
-<style>
-body {
-    background-color: #0e1117;
-    color: white;
-}
-.card {
-    background-color: #1e1e1e;
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 10px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ---------------- CARGA ----------------
+# ---------------- CARGA ROBUSTA ----------------
 def cargar_datos():
     try:
         response = requests.get(EXCEL_URL, timeout=20)
-        response.raise_for_status()
+
+        # 🔥 DEBUG CLAVE
+        st.write("Status code:", response.status_code)
+        st.write("Content-Type:", response.headers.get("Content-Type"))
+
+        if "html" in response.headers.get("Content-Type", ""):
+            st.error("❌ SharePoint está devolviendo una página web, no el Excel.")
+            st.info("👉 Debes configurar el archivo como 'Cualquiera con el enlace puede ver'")
+            return pd.DataFrame()
 
         file = BytesIO(response.content)
+
         df = pd.read_excel(file, engine="openpyxl")
 
-        df = df[["Nombre", "Licencia", "Tecnomecanica", "SOAT"]]
+        st.success("✅ Excel cargado correctamente")
+
+        # Ver columnas reales
+        st.write("Columnas detectadas:", df.columns.tolist())
+
+        # Intentar seleccionar columnas correctas
+        columnas = [c.lower() for c in df.columns]
+
+        nombre_col = next((c for c in df.columns if "nombre" in c.lower()), None)
+        lic_col = next((c for c in df.columns if "licencia" in c.lower()), None)
+        tec_col = next((c for c in df.columns if "tecno" in c.lower()), None)
+        soat_col = next((c for c in df.columns if "soat" in c.lower()), None)
+
+        if not all([nombre_col, lic_col, tec_col, soat_col]):
+            st.error("❌ No se encontraron las columnas necesarias")
+            return pd.DataFrame()
+
+        df = df[[nombre_col, lic_col, tec_col, soat_col]].copy()
+        df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
 
         for col in ["Licencia", "Tecnomecanica", "SOAT"]:
             df[col] = pd.to_datetime(df[col], errors="coerce")
@@ -47,14 +57,10 @@ def cargar_datos():
         return df
 
     except Exception as e:
-        st.error(f"Error cargando Excel: {e}")
+        st.error(f"🔥 Error real: {e}")
         return pd.DataFrame()
 
 df = cargar_datos()
-
-# DEBUG opcional
-with st.expander("🔍 Ver datos"):
-    st.dataframe(df)
 
 # ---------------- LÓGICA ----------------
 hoy = date.today()
@@ -75,7 +81,6 @@ total = len(df)
 col1, col2, col3 = st.columns(3)
 col1.metric("Total Personal", total)
 
-# ---------------- UI ----------------
 st.markdown("## 📋 Estado de Documentos")
 
 for _, row in df.iterrows():
@@ -88,7 +93,7 @@ for _, row in df.iterrows():
         vencidos.append(row["Nombre"])
 
     st.markdown(f"""
-    <div class="card">
+    <div style="background:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px">
         <b>{row['Nombre']}</b><br>
         <span style="color:{lic_c}">Licencia: {lic_e}</span><br>
         <span style="color:{tec_c}">Tecnomecánica: {tec_e}</span><br>
@@ -102,7 +107,7 @@ col3.metric("Al Día", total - total_vencidos)
 # ---------------- TELEGRAM ----------------
 def enviar_telegram(lista):
     if not lista:
-        return False, "No hay documentos vencidos"
+        return False, "No hay vencidos"
 
     mensaje = "*🚨 DOCUMENTOS VENCIDOS*\n\n"
     for nombre in lista:
@@ -116,23 +121,9 @@ def enviar_telegram(lista):
         "parse_mode": "Markdown"
     }
 
-    try:
-        r = requests.post(url, data=payload, timeout=10)
-        respuesta = r.json()
+    r = requests.post(url, data=payload)
+    return r.json()
 
-        if respuesta.get("ok"):
-            return True, "Enviado correctamente"
-        else:
-            return False, str(respuesta)
-
-    except Exception as e:
-        return False, str(e)
-
-# ---------------- BOTÓN ----------------
 if st.button("📩 Enviar reporte a Telegram"):
-    ok, msg = enviar_telegram(vencidos)
-
-    if ok:
-        st.success("Reporte enviado correctamente ✅")
-    else:
-        st.error(f"Error: {msg}")
+    resp = enviar_telegram(vencidos)
+    st.write(resp)
