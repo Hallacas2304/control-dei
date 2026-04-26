@@ -1,23 +1,21 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
-from reportlab.platypus import SimpleDocTemplate, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Sistema DEI", layout="wide")
 
-EXCEL_URL = "TU_LINK"
+EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
 
-# 🔐 secretos
-TELEGRAM_TOKEN = st.secrets["TOKEN"]
-CHAT_ID = st.secrets["CHAT_ID"]
+# 🔐 SEGURIDAD
+TELEGRAM_TOKEN = st.secrets.get("TOKEN", "")
+CHAT_ID = st.secrets.get("CHAT_ID", "")
 
 # ---------------- LOGIN ----------------
 def login():
-    st.title("🔐 Acceso al Sistema")
+    st.title("🔐 Acceso")
 
     user = st.text_input("Usuario")
     password = st.text_input("Contraseña", type="password")
@@ -38,85 +36,107 @@ if not st.session_state["login"]:
 # ---------------- CARGA ----------------
 @st.cache_data(ttl=300)
 def cargar():
-    r = requests.get(EXCEL_URL)
+    r = requests.get(EXCEL_URL, timeout=20)
+    r.raise_for_status()
+
     file = BytesIO(r.content)
     df = pd.read_excel(file, engine="openpyxl")
 
-    df = df[[
-        next(c for c in df.columns if "nombre" in c.lower()),
-        next(c for c in df.columns if "licencia" in c.lower()),
-        next(c for c in df.columns if "tecno" in c.lower()),
-        next(c for c in df.columns if "soat" in c.lower())
-    ]]
+    # detectar columnas automáticamente
+    nombre = next(c for c in df.columns if "nombre" in c.lower())
+    licencia = next(c for c in df.columns if "licencia" in c.lower())
+    tecno = next(c for c in df.columns if "tecno" in c.lower())
+    soat = next(c for c in df.columns if "soat" in c.lower())
 
-    df.columns = ["Nombre","Licencia","Tecnomecanica","SOAT"]
+    df = df[[nombre, licencia, tecno, soat]].copy()
+    df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
 
-    for col in df.columns[1:]:
+    for col in ["Licencia", "Tecnomecanica", "SOAT"]:
         df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    return df
+    return df.dropna(subset=["Nombre"])
 
 df = cargar()
-
 hoy = date.today()
 
 # ---------------- SIDEBAR ----------------
-menu = st.sidebar.selectbox("Menú", ["Dashboard", "Reportes", "Configuración"])
+menu = st.sidebar.radio("Menú", ["Dashboard", "Vencidos", "Exportar", "Configuración"])
 
-# ---------------- LÓGICA ----------------
-def vencido(fecha):
-    return pd.notna(fecha) and fecha.date() <= hoy
+# ---------------- FUNCIONES ----------------
+def estado(fecha, dias_alerta=5):
+    if pd.isna(fecha):
+        return "SIN DATO"
+    dias = (fecha.date() - hoy).days
+    if dias < 0:
+        return "VENCIDO"
+    elif dias <= dias_alerta:
+        return f"VENCE EN {dias} DÍAS"
+    return "AL DÍA"
 
 # ---------------- DASHBOARD ----------------
 if menu == "Dashboard":
-    st.title("🚓 Control Documental")
+    st.title("📊 Panel General")
+
+    total = len(df)
 
     vencidos = df[
-        df["Licencia"].apply(vencido) |
-        df["Tecnomecanica"].apply(vencido) |
-        df["SOAT"].apply(vencido)
+        (df["Licencia"].dt.date <= hoy) |
+        (df["Tecnomecanica"].dt.date <= hoy) |
+        (df["SOAT"].dt.date <= hoy)
     ]
 
     col1, col2 = st.columns(2)
-    col1.metric("Total", len(df))
-    col2.metric("Vencidos", len(vencidos))
+    col1.metric("Total Personal", total)
+    col2.metric("Total Vencidos", len(vencidos))
+
+    st.dataframe(df)
+
+# ---------------- VENCIDOS ----------------
+if menu == "Vencidos":
+    st.title("🚨 Documentos Vencidos")
+
+    vencidos = df[
+        (df["Licencia"].dt.date <= hoy) |
+        (df["Tecnomecanica"].dt.date <= hoy) |
+        (df["SOAT"].dt.date <= hoy)
+    ]
+
+    busqueda = st.text_input("🔍 Buscar")
+
+    if busqueda:
+        vencidos = vencidos[vencidos["Nombre"].str.contains(busqueda, case=False)]
 
     st.dataframe(vencidos)
 
-# ---------------- PDF ----------------
-def generar_pdf(lista):
-    doc = SimpleDocTemplate("reporte.pdf")
-    styles = getSampleStyleSheet()
+# ---------------- EXPORTAR ----------------
+if menu == "Exportar":
+    st.title("📥 Exportar Datos")
 
-    content = [Paragraph("REPORTE DE DOCUMENTOS VENCIDOS", styles["Title"])]
+    output = BytesIO()
+    df.to_excel(output, index=False, engine="openpyxl")
+    output.seek(0)
 
-    for nombre in lista:
-        content.append(Paragraph(nombre, styles["Normal"]))
+    st.download_button(
+        "Descargar Excel",
+        data=output,
+        file_name="reporte.xlsx"
+    )
 
-    doc.build(content)
-
-    with open("reporte.pdf", "rb") as f:
-        return f.read()
-
-# ---------------- REPORTES ----------------
-if menu == "Reportes":
-    st.title("📄 Reportes")
+# ---------------- TELEGRAM ----------------
+def enviar():
+    if not TELEGRAM_TOKEN:
+        st.warning("Configura TOKEN en secrets")
+        return
 
     vencidos = df[
-        df["Licencia"].apply(vencido) |
-        df["Tecnomecanica"].apply(vencido) |
-        df["SOAT"].apply(vencido)
+        (df["Licencia"].dt.date <= hoy) |
+        (df["Tecnomecanica"].dt.date <= hoy) |
+        (df["SOAT"].dt.date <= hoy)
     ]
 
     lista = vencidos["Nombre"].tolist()
 
-    if st.button("📥 Descargar PDF"):
-        pdf = generar_pdf(lista)
-        st.download_button("Descargar", pdf, file_name="reporte.pdf")
-
-# ---------------- TELEGRAM ----------------
-def enviar(lista):
-    mensaje = "*🚨 REPORTE OFICIAL*\n\n"
+    mensaje = "*🚨 REPORTE DE VENCIDOS*\n\n"
     mensaje += "\n".join(f"- {n}" for n in lista)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -127,10 +147,18 @@ def enviar(lista):
         "parse_mode": "Markdown"
     })
 
+# ---------------- CONFIG ----------------
 if menu == "Configuración":
     st.title("⚙️ Configuración")
 
     if st.button("📩 Enviar reporte ahora"):
-        lista = df["Nombre"].tolist()
-        enviar(lista)
-        st.success("Enviado")
+        enviar()
+        st.success("Reporte enviado")
+
+# ---------------- AUTO ENVÍO DIARIO ----------------
+if "ultimo_envio" not in st.session_state:
+    st.session_state["ultimo_envio"] = ""
+
+if st.session_state["ultimo_envio"] != str(hoy):
+    enviar()
+    st.session_state["ultimo_envio"] = str(hoy)
