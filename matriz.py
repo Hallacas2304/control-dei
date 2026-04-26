@@ -7,9 +7,9 @@ from io import BytesIO
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Control GUDMO 16", layout="wide")
 
-# ✅ TOKEN ACTUALIZADO SEGÚN TU ÚLTIMA IMAGEN
+# ✅ DATOS CORREGIDOS CON TU ÚLTIMA IMAGEN (9:18 AM)
 TOKEN_TELEGRAM = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
-CHAT_ID = "6198642735"
+CHAT_ID = "8081331013"
 
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage"
@@ -18,8 +18,8 @@ def enviar_telegram(mensaje):
         r = requests.post(url, data=payload, timeout=15)
         if r.status_code == 200:
             return True, "✅ ¡Reporte enviado con éxito!"
-        return False, f"Telegram dice: {r.json().get('description')}"
-    except: return False, "Error de red"
+        return False, f"Error: {r.json().get('description')}"
+    except: return False, "Fallo de conexión"
 
 @st.cache_data(ttl=1)
 def cargar_datos():
@@ -44,11 +44,10 @@ if df is not None:
         for col_idx, valor in enumerate(fila):
             nombre_col = str(df.columns[col_idx]).upper()
             
-            # FILTRO: Buscamos SOAT, TECNO y CONDUCCIÓN
+            # FILTRO: SOAT, TECNO y CONDUCCIÓN
             if any(p in nombre_col for p in ["SOAT", "TECNO", "CONDUCCION"]):
                 try:
                     f_venc = pd.to_datetime(valor, errors='coerce', dayfirst=True)
-                    # Filtramos fechas de 1970 y solo mostramos las ya vencidas
                     if pd.notna(f_venc) and f_venc.year > 2010 and f_venc <= hoy:
                         alertas.append(f"• <b>{nombre}</b>: {nombre_col} ({f_venc.date()})")
                 except: continue
@@ -63,7 +62,7 @@ if df is not None:
             if exito: st.success(msj)
             else: st.error(f"❌ {msj}")
     else:
-        st.info("🔎 Todo al día en SOAT, Tecno y Licencias de Conducción.")
+        st.info("🔎 Todo al día en SOAT, Tecno y Licencias.")
 
     if st.button("♻️ RECARGAR DATOS"):
         st.cache_data.clear()
@@ -72,5 +71,4 @@ if df is not None:
     st.divider()
     st.dataframe(df)
 else:
-    st.error("No se pudo conectar con el servidor de archivos.")
-    
+    st.error("No se pudo conectar con el Excel.")
