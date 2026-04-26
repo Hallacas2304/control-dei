@@ -4,7 +4,7 @@ from datetime import date
 import requests
 from io import BytesIO
 
-# --- ESTILOS ---
+# --- CONFIGURACIÓN VISUAL ---
 st.set_page_config(page_title="GUDMO 16 - CONTROL TOTAL", layout="wide")
 st.markdown("""
     <style>
@@ -21,6 +21,7 @@ def cargar_datos():
     try:
         url = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQD9M-2uLoxfRJ_8eU_nrvxoAepaaMdolPGx0pEaYQUqMBo?download=1"
         r = requests.get(url, timeout=15)
+        # Cargamos el Excel limpio
         return pd.read_excel(BytesIO(r.content), header=None)
     except:
         return None
@@ -29,59 +30,66 @@ df = cargar_datos()
 
 if df is not None:
     hoy = pd.Timestamp(date.today())
-    reporte_final = []
+    # Esta es la lista única que usaremos para pantalla y Telegram
+    infractores_detectados = []
 
-    # RECORRIDO CELDA POR CELDA (Para no fallar puntería)
+    # --- ESCANEO FILA POR FILA ---
     for i in range(len(df)):
         fila = df.iloc[i]
+        # El nombre siempre suele estar en la primera columna con texto (Índice 0)
         nombre = str(fila[0]).strip().upper()
         
-        # Filtro para solo procesar filas con nombres de funcionarios
-        if len(nombre) < 5 or "NAN" in nombre or nombre.isdigit() or "APELLIDOS" in nombre:
+        # Filtro para ignorar basura, números de fila o encabezados
+        if len(nombre) < 5 or nombre.isdigit() or "NAN" in nombre or "APELLIDOS" in nombre:
             continue
 
-        alertas_funcionario = []
+        alertas_fila = []
         
-        # Revisamos desde la columna 1 en adelante buscando fechas
-        for idx in range(1, len(fila)):
-            valor = fila[idx]
+        # Escaneamos TODA la fila buscando fechas
+        for idx, valor in enumerate(fila):
+            # Solo si la celda tiene un valor que no sea texto
             if pd.notna(valor) and not isinstance(valor, str):
                 try:
                     f = pd.to_datetime(valor, errors='coerce')
-                    # Filtro de seguridad: Solo años actuales (evita el 1970)
-                    if pd.notna(f) and 2024 < f.year < 2030:
+                    # Filtro anti-1970: Solo fechas de este año en adelante
+                    if pd.notna(f) and f.year >= 2024:
                         if f <= hoy:
-                            # Detectar qué documento es según la posición
-                            tipo = "LICENCIA" if idx == 1 else ("TECNO" if idx == 2 else "SOAT")
-                            alertas_funcionario.append(f"🚨 {tipo} VENCIDO ({f.date()})")
+                            # Identificar qué es por la columna (B=Licencia, C=Tecno, D=Soat)
+                            tipo = "LICENCIA" if idx == 1 else ("TECNO" if idx == 2 else ("SOAT" if idx == 3 else "DOC"))
+                            alertas_fila.append(f"🚨 {tipo} VENCIDO ({f.date()})")
                 except:
                     continue
 
-        if alertas_funcionario:
-            reporte_final.append(f"👤 *{nombre}*\n" + "\n".join(alertas_funcionario))
+        if alertas_fila:
+            # Guardamos el bloque de texto para enviarlo tal cual
+            reporte_persona = f"👤 *{nombre}*\n" + "\n".join(alertas_fila)
+            infractores_detectados.append(reporte_persona)
 
-    # --- PANTALLA ---
+    # --- MOSTRAR EN PANTALLA ---
     st.title("🛡️ DETECCIÓN DE INFRACTORES GUDMO 16")
     
-    if not reporte_final:
-        st.info("No se detectaron documentos vencidos. Verifica que las fechas en el Excel estén en formato de fecha (DD/MM/AAAA).")
+    if not infractores_detectados:
+        st.success("✅ No se detectaron documentos vencidos hoy.")
     else:
-        for r in reporte_final:
-            st.markdown(f'<div class="card-vencido">{r.replace("*", "").replace("\n", "<br>")}</div>', unsafe_allow_html=True)
+        for item in infractores_detectados:
+            st.markdown(f'<div class="card-vencido">{item.replace("*", "").replace("\n", "<br>")}</div>', unsafe_allow_html=True)
 
-    # --- TELEGRAM ---
+    # --- ENVIAR A TELEGRAM ---
     if st.button("🚀 ENVIAR REPORTE A TELEGRAM", use_container_width=True):
-        if reporte_final:
-            mensaje = "🚨 *NOTIFICACIÓN VENCIMIENTOS GUDMO 16*\n\n" + "\n\n".join(reporte_final)
+        if infractores_detectados:
+            mensaje_completo = "🚨 *NOTIFICACIÓN VENCIMIENTOS GUDMO 16*\n\n" + "\n\n".join(infractores_detectados)
+            
             try:
                 res = requests.post(f"https://api.telegram.org/bot{TOKEN_TELEGRAM}/sendMessage", 
-                                    data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"})
-                if res.status_code == 200: st.success("✅ Enviado")
-                else: st.error(f"Error TG: {res.status_code}")
+                                    data={"chat_id": CHAT_ID, "text": mensaje_completo, "parse_mode": "Markdown"})
+                if res.status_code == 200:
+                    st.success("✅ Reporte enviado a Telegram.")
+                else:
+                    st.error(f"Error de Telegram: {res.status_code}")
             except:
-                st.error("Error de conexión")
+                st.error("Error de conexión con Telegram.")
         else:
-            st.warning("Nada que enviar")
+            st.warning("No hay infractores detectados para enviar.")
 else:
-    st.error("No se pudo cargar el archivo.")
+    st.error("No se pudo leer el Excel. Verifica que el link de SharePoint siga activo.")
     
