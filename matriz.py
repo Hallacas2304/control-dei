@@ -12,22 +12,39 @@ EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela
 TELEGRAM_TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
 CHAT_ID = "8081331013"
 
-# ---------------- DESCARGA SEGURA ----------------
-@st.cache_data(ttl=300)  # evita romper conexión y mejora rendimiento
+# ---------------- ESTILO OSCURO ----------------
+st.markdown("""
+    <style>
+    body {background-color: #0e1117; color: white;}
+    </style>
+""", unsafe_allow_html=True)
+
+# ---------------- CARGA DE DATOS ----------------
+@st.cache_data(ttl=300)
 def cargar_datos():
     try:
         response = requests.get(EXCEL_URL, timeout=20)
         response.raise_for_status()
-        file = BytesIO(response.content)
 
+        file = BytesIO(response.content)
         df = pd.read_excel(file, engine="openpyxl")
 
-        # Renombrar columnas
+        # Validar columnas
+        if df.shape[1] < 4:
+            st.error("El archivo no tiene al menos 4 columnas válidas.")
+            return pd.DataFrame()
+
+        # Tomar solo columnas necesarias
+        df = df.iloc[:, :4].copy()
         df.columns = ["Nombre", "Licencia", "Tecnomecanica", "SOAT"]
 
-        # Limpiar filas inválidas
+        # Limpiar datos
         df = df.dropna(subset=["Nombre"])
-        df = df[df["Nombre"].astype(str).str.len() > 5]  # evita números o basura
+        df = df[df["Nombre"].astype(str).str.len() > 5]
+
+        # Convertir fechas
+        for col in ["Licencia", "Tecnomecanica", "SOAT"]:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
 
         return df
 
@@ -48,11 +65,11 @@ def estado(fecha):
     return "AL DÍA", "green"
 
 vencidos = []
-
-total = len(df)
 total_vencidos = 0
 
 # ---------------- MÉTRICAS ----------------
+total = len(df)
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -70,15 +87,14 @@ for _, row in df.iterrows():
         total_vencidos += 1
         vencidos.append(row["Nombre"])
 
-    with st.container():
-        st.markdown(f"""
-        <div style="background-color:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px">
-            <h4 style="color:white">{row['Nombre']}</h4>
-            <p style="color:{licencia_color}">Licencia: {licencia_estado}</p>
-            <p style="color:{tecno_color}">Tecnomecánica: {tecno_estado}</p>
-            <p style="color:{soat_color}">SOAT: {soat_estado}</p>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="background-color:#1e1e1e;padding:15px;border-radius:10px;margin-bottom:10px">
+        <h4 style="color:white">{row['Nombre']}</h4>
+        <p style="color:{licencia_color}">Licencia: {licencia_estado}</p>
+        <p style="color:{tecno_color}">Tecnomecánica: {tecno_estado}</p>
+        <p style="color:{soat_color}">SOAT: {soat_estado}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ---------------- MÉTRICAS FINALES ----------------
 with col2:
@@ -90,7 +106,7 @@ with col3:
 # ---------------- TELEGRAM ----------------
 def enviar_telegram(lista):
     if not lista:
-        return "No hay vencidos 🎉"
+        return 200
 
     mensaje = "*🚨 DOCUMENTOS VENCIDOS*\n\n"
     for nombre in lista:
@@ -104,8 +120,11 @@ def enviar_telegram(lista):
         "parse_mode": "Markdown"
     }
 
-    r = requests.post(url, data=payload)
-    return r.status_code
+    try:
+        r = requests.post(url, data=payload, timeout=10)
+        return r.status_code
+    except:
+        return 500
 
 # ---------------- BOTÓN ----------------
 if st.button("📩 Enviar reporte a Telegram"):
