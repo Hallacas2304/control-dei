@@ -19,7 +19,7 @@ except:
 
 hoy = date.today()
 
-# ---------------- ESTILO LIMPIO ----------------
+# ---------------- ESTILO ----------------
 st.markdown("""
 <style>
 body {
@@ -116,7 +116,7 @@ def enviar_telegram(lista):
         }
     )
 
-    return (True, "Enviado") if r.status_code == 200 else (False, r.text)
+    return (True, "Enviado a Telegram") if r.status_code == 200 else (False, r.text)
 
 # ---------------- MENU ----------------
 menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Excel", "⚙️ Ajustes"], horizontal=True)
@@ -124,7 +124,7 @@ menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Ex
 # ================== INICIO ==================
 if menu == "🏠 Inicio":
 
-    st.markdown('<div class="topbar">🔎 Buscador inteligente de funcionarios</div>', unsafe_allow_html=True)
+    st.markdown('<div class="topbar">🔎 Buscador de funcionarios con alertas</div>', unsafe_allow_html=True)
 
     buscar = st.text_input("Buscar funcionario (opcional)")
 
@@ -159,9 +159,9 @@ if menu == "🏠 Inicio":
         </div>
         """, unsafe_allow_html=True)
 
-        # 📎 SUBIDA DIRECTA POR FUNCIONARIO
+        # 📎 SUBIR SOPORTES
         files = st.file_uploader(
-            f"📎 Subir documentos - {nombre}",
+            f"📎 Documentos de {nombre}",
             accept_multiple_files=True,
             key=f"file_{i}"
         )
@@ -184,7 +184,7 @@ if menu == "🏠 Inicio":
                 file_name=f"{nombre}_soportes.zip"
             )
 
-# ================== ALERTAS + TELEGRAM ==================
+# ================== ALERTAS ==================
 if menu == "🚨 Alertas":
 
     lista = []
@@ -194,9 +194,12 @@ if menu == "🚨 Alertas":
             if pd.notna(r[c]) and r[c].date() <= hoy:
                 lista.append(f"{r['Nombre']} → {c} vencido o próximo")
 
-    st.error("\n".join(lista) if lista else "Sin alertas 🚀")
+    if lista:
+        st.error("\n".join(lista))
+    else:
+        st.success("Sin alertas 🚀")
 
-    if st.button("📲 Enviar Telegram"):
+    if st.button("📲 Enviar a Telegram"):
         ok, msg = enviar_telegram(lista)
         st.success(msg) if ok else st.error(msg)
 
@@ -225,4 +228,30 @@ if menu == "✍️ Excel":
 # ================== AJUSTES ==================
 if menu == "⚙️ Ajustes":
 
-    st.info("Sistema estable 🚀 listo para escalar a base de datos o login")
+    st.subheader("⚙️ Panel del sistema")
+
+    st.write("📡 Estado de conexión")
+
+    st.success("✔ Sistema activo")
+
+    if TELEGRAM_TOKEN and CHAT_ID:
+        st.success("✔ Telegram configurado")
+    else:
+        st.warning("⚠ Telegram no configurado")
+
+    st.divider()
+
+    if st.button("📲 Enviar reporte completo a Telegram"):
+
+        lista = []
+
+        for _, r in df.iterrows():
+            for c in ["Licencia", "Tecno", "SOAT"]:
+                if pd.notna(r[c]) and r[c].date() <= hoy:
+                    lista.append(f"{r['Nombre']} → {c} vencido/próximo")
+
+        if lista:
+            ok, msg = enviar_telegram(lista)
+            st.success(msg) if ok else st.error(msg)
+        else:
+            st.info("No hay alertas para enviar")
