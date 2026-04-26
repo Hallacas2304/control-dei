@@ -20,14 +20,36 @@ except:
 
 hoy = date.today()
 
-# ---------------- ESTILO ----------------
+# ---------------- ESTILO TECH ----------------
 st.markdown("""
 <style>
-html, body {background-color:#0f172a;color:white;}
-.card {background:#1e293b;padding:15px;border-radius:15px;margin-bottom:10px;}
-.rojo {color:#ef4444;font-weight:bold;}
-.amarillo {color:#f59e0b;font-weight:bold;}
-.verde {color:#22c55e;font-weight:bold;}
+html, body {
+    background: radial-gradient(circle at 20% 20%, #0b1220, #020617);
+    color: #e2e8f0;
+    font-family: 'Segoe UI', sans-serif;
+}
+
+.card {
+    background: linear-gradient(145deg, #0f172a, #020617);
+    border: 1px solid #1e293b;
+    padding: 15px;
+    border-radius: 16px;
+    margin-bottom: 10px;
+    box-shadow: 0 0 15px rgba(0,255,255,0.05);
+}
+
+.rojo { color:#ff4d4d; font-weight:bold; }
+.amarillo { color:#facc15; font-weight:bold; }
+.verde { color:#22c55e; font-weight:bold; }
+
+.oficial {
+    background: linear-gradient(90deg, #1e3a8a, #06b6d4);
+    color: white;
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+}
+
 #MainMenu, footer, header {visibility:hidden;}
 .block-container {padding-top:1rem;padding-bottom:1rem;}
 </style>
@@ -90,10 +112,7 @@ def enviar_telegram(lista):
         "parse_mode": "Markdown"
     })
 
-    if r.status_code == 200:
-        return True, "Mensaje enviado correctamente"
-    else:
-        return False, r.text
+    return (True, "Enviado") if r.status_code == 200 else (False, r.text)
 
 # ---------------- MENU ----------------
 menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Editar", "⚙️ Ajustes"], horizontal=True)
@@ -108,9 +127,13 @@ if menu == "🏠 Inicio":
         tec_e, tec_c = evaluar(row["Tecnomecanica"])
         soa_e, soa_c = evaluar(row["SOAT"])
 
+        badge = ""
+        if lic_e == "COMUNICADO OFICIAL" and tec_e == "COMUNICADO OFICIAL" and soa_e == "COMUNICADO OFICIAL":
+            badge = '<span class="oficial">COMUNICADO OFICIAL</span>'
+
         st.markdown(f"""
         <div class="card">
-            <b>{row['Nombre']}</b><br>
+            <b>{row['Nombre']}</b> {badge}<br>
             Licencia: <span class="{lic_c}">{lic_e}</span><br>
             Tecnomecánica: <span class="{tec_c}">{tec_e}</span><br>
             SOAT: <span class="{soa_c}">{soa_e}</span>
@@ -119,8 +142,6 @@ if menu == "🏠 Inicio":
 
 # ---------------- ALERTAS ----------------
 if menu == "🚨 Alertas":
-
-    st.subheader("🚨 Estado detallado")
 
     def estado_texto(fecha):
         if pd.isna(fecha):
@@ -134,7 +155,6 @@ if menu == "🚨 Alertas":
             return f"🟢 AL DÍA ({fecha.date()})"
 
     df_alertas = df.copy()
-
     df_alertas["Licencia"] = df_alertas["Licencia"].apply(estado_texto)
     df_alertas["Tecnomecanica"] = df_alertas["Tecnomecanica"].apply(estado_texto)
     df_alertas["SOAT"] = df_alertas["SOAT"].apply(estado_texto)
@@ -143,10 +163,8 @@ if menu == "🚨 Alertas":
 
     with tab1:
         st.dataframe(df_alertas[["Nombre", "SOAT"]], use_container_width=True)
-
     with tab2:
         st.dataframe(df_alertas[["Nombre", "Tecnomecanica"]], use_container_width=True)
-
     with tab3:
         st.dataframe(df_alertas[["Nombre", "Licencia"]], use_container_width=True)
 
@@ -162,9 +180,49 @@ if menu == "📊 Dashboard":
         ]
     }).set_index("Tipo"))
 
+    # RESUMEN
+    st.subheader("📋 Resumen general")
+
+    resumen = []
+    for _, row in df.iterrows():
+        docs = []
+
+        if pd.notna(row["Licencia"]) and row["Licencia"].date() <= hoy:
+            docs.append("Licencia")
+        if pd.notna(row["Tecnomecanica"]) and row["Tecnomecanica"].date() <= hoy:
+            docs.append("Tecnomecánica")
+        if pd.notna(row["SOAT"]) and row["SOAT"].date() <= hoy:
+            docs.append("SOAT")
+
+        if pd.isna(row["Licencia"]) and pd.isna(row["Tecnomecanica"]) and pd.isna(row["SOAT"]):
+            estado = "COMUNICADO OFICIAL"
+        elif docs:
+            estado = ", ".join(docs)
+        else:
+            estado = "AL DÍA"
+
+        resumen.append({"Funcionario": row["Nombre"], "Estado": estado})
+
+    st.dataframe(pd.DataFrame(resumen), use_container_width=True)
+
+    # LISTADO OFICIAL
+    st.subheader("📢 Comunicado Oficial")
+    df_oficial = df[
+        df["Licencia"].isna() &
+        df["Tecnomecanica"].isna() &
+        df["SOAT"].isna()
+    ]
+
+    for _, row in df_oficial.iterrows():
+        st.markdown(f"""
+        <div class="card">
+            <b>{row['Nombre']}</b><br>
+            <span class="oficial">COMUNICADO OFICIAL</span>
+        </div>
+        """, unsafe_allow_html=True)
+
 # ---------------- EDITAR ----------------
 if menu == "✍️ Editar":
-
     edit = st.data_editor(df)
     buffer = BytesIO()
     edit.to_excel(buffer, index=False)
