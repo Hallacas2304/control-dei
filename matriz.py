@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 from datetime import date, datetime
 from io import BytesIO
-import zipfile
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="DEI Control", layout="wide")
@@ -29,7 +28,6 @@ st.markdown("""
     .bg-amarillo { background-color: #facc15; }
     .bg-verde { background-color: #16a34a; }
     .topbar { background:#111827; padding:12px; border-radius:10px; margin-bottom:15px; color:white; text-align: center; font-weight: bold; }
-    #MainMenu, footer, header {visibility:hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -50,7 +48,7 @@ def cargar():
             df[c] = pd.to_datetime(df[c], errors="coerce")
         return df
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error cargando datos: {e}")
         return pd.DataFrame(columns=["Nombre", "Licencia", "Tecno", "SOAT"])
 
 df = cargar()
@@ -65,19 +63,20 @@ def obtener_info_estado(fecha):
     return f"AL DÍA ({f_str})", "bg-verde", "🟢"
 
 def enviar_telegram(lista):
-    if not TELEGRAM_TOKEN or not CHAT_ID: return False, "No configurado"
+    if not TELEGRAM_TOKEN or not CHAT_ID: return False, "Faltan credenciales"
     mensaje = "🚨 *CONTROL DEI*\n" + "_" + datetime.now().strftime('%Y-%m-%d %H:%M') + "_\n\n" + "\n\n".join(lista)
     try:
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"})
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                         data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"})
         return (True, "OK") if r.status_code == 200 else (False, r.status_code)
-    except: return False, "Error red"
+    except: return False, "Error de conexión"
 
-# ---------------- MENU ----------------
+# ---------------- INTERFAZ ----------------
 menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Excel", "⚙️ Ajustes"], horizontal=True)
 
 if menu == "🏠 Inicio":
     st.markdown('<div class="topbar">📂 GESTIÓN DOCUMENTAL</div>', unsafe_allow_html=True)
-    buscar = st.text_input("Filtrar nombre...")
+    buscar = st.text_input("Filtrar por nombre...")
     df_v = df[df["Nombre"].str.contains(buscar, case=False)] if buscar else df
     for i, row in df_v.iterrows():
         with st.expander(f"👤 {row['Nombre']}"):
@@ -106,31 +105,37 @@ if menu == "✍️ Excel":
     if st.toggle("👁️ Ver editor", value=True):
         editado = st.data_editor(df, use_container_width=True)
         buf = BytesIO()
-        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-            editado.to_excel(writer, index=False, sheet_name='Reporte')
-            worksheet = writer.sheets['Reporte']
-            for i, col in enumerate(editado.columns):
-                # SOLUCIÓN AL ERROR: Verificamos si hay datos antes de pedir el máximo
-                if not editado[col].empty:
-                    max_len = editado[col].astype(str).map(len).max()
-                    column_len = max(max_len, len(col)) + 2
-                else:
-                    column_len = len(col) + 2
-                worksheet.set_column(i, i, column_len)
-        st.download_button("📥 Descargar Excel", buf.getvalue(), "control_dei.xlsx")
+        try:
+            with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                editado.to_excel(writer, index=False, sheet_name='Reporte')
+                worksheet = writer.sheets['Reporte']
+                # Ajuste de columnas mejorado
+                for i, col in enumerate(editado.columns):
+                    # Medimos el nombre de la columna o usamos un ancho base de 20
+                    ancho = max(len(str(col)), 20) 
+                    worksheet.set_column(i, i, ancho)
+            st.download_button("📥 Descargar Excel", buf.getvalue(), "control_dei.xlsx")
+        except Exception as e:
+            st.error(f"Error generando Excel: {e}")
+            # Fallback si falla xlsxwriter
+            editado.to_excel(buf, index=False)
+            st.download_button("📥 Descargar Excel (Básico)", buf.getvalue(), "control_dei.xlsx")
 
 if menu == "⚙️ Ajustes":
-    st.subheader("⚙️ Configuración")
-    ahora = datetime.now()
-    st.info(f"🕒 Servidor: {ahora.strftime('%H:%M:%S')}")
-    
-    if st.button("🚀 Enviar Reporte Ahora"):
+    st.subheader("⚙️ Reporte Manual")
+    if st.button("🚀 Enviar a Telegram Ahora"):
         lista_m = []
         for _, r in df.iterrows():
-            alertas = [f"  {obtener_info_estado(r[c])[2]} {c}: {obtener_info_estado(r[c])[0]}" for c in ["Licencia", "Tecno", "SOAT"] if "VENCIDO" in obtener_info_estado(r[c])[0] or "PRÓXIMO" in obtener_info_estado(r[c])[0]]
-            if alertas: lista_m.append(f"👤 *{r['Nombre']}*\n" + "\n".join(alertas))
+            alertas = []
+            for c in ["Licencia", "Tecno", "SOAT"]:
+                txt, _, ico = obtener_info_estado(r[c])
+                if "VENCIDO" in txt or "PRÓXIMO" in txt:
+                    alertas.append(f"  {ico} {c}: {txt}")
+            if alertas:
+                lista_m.append(f"👤 *{r['Nombre']}*\n" + "\n".join(alertas))
+        
         if lista_m:
             ok, msg = enviar_telegram(lista_m)
-            if ok: st.success("✅ Reporte enviado.")
+            if ok: st.success("✅ Enviado.")
             else: st.error(f"❌ Error: {msg}")
-        else: st.info("Sin vencimientos.")
+        else: st.info("No hay alertas.")
