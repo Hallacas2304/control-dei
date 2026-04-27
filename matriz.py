@@ -132,21 +132,31 @@ if menu == "📊 Dashboard":
     vencidos = {c: (df[c] < pd.to_datetime(hoy)).sum() for c in ["SOAT", "Tecno", "Licencia"]}
     st.bar_chart(pd.Series(vencidos))
 
-# --- EXCEL ---
+# --- EXCEL (AJUSTADO PARA ELIMINAR NUMERALES) ---
 if menu == "✍️ Excel":
     if st.toggle("👁️ Ver/Editar base de datos", value=True):
         editado = st.data_editor(df, use_container_width=True)
+        
         buf = BytesIO()
-        editado.to_excel(buf, index=False)
-        st.download_button("📥 Descargar Excel", buf.getvalue(), "control_dei.xlsx")
+        # Usamos xlsxwriter para ajustar el ancho de columnas
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+            editado.to_excel(writer, index=False, sheet_name='Reporte')
+            workbook = writer.book
+            worksheet = writer.sheets['Reporte']
+            
+            # Ajuste automático de columnas
+            for i, col in enumerate(editado.columns):
+                column_len = max(editado[col].astype(str).map(len).max(), len(col)) + 2
+                worksheet.set_column(i, i, column_len)
+        
+        st.download_button("📥 Descargar Excel Ajustado", buf.getvalue(), "control_dei.xlsx")
 
-# --- AJUSTES (CORREGIDO) ---
+# --- AJUSTES ---
 if menu == "⚙️ Ajustes":
     st.subheader("⚙️ Configuración y Reportes")
     ahora = datetime.now()
     st.info(f"🕒 Hora del servidor: {ahora.strftime('%H:%M:%S')}")
 
-    # Lógica Automática 7:00 AM
     if ahora.hour == 7 and ahora.minute == 0:
         if "auto_dia" not in st.session_state or st.session_state.auto_dia != ahora.day:
             lista_auto = []
@@ -173,7 +183,7 @@ if menu == "⚙️ Ajustes":
         if lista_m:
             ok, msg = enviar_telegram(lista_m)
             if ok:
-                st.success("✅ Reporte enviado correctamente.") # CORRECCIÓN AQUÍ
+                st.success("✅ Reporte enviado correctamente.")
             else:
                 st.error(f"❌ Error: {msg}")
         else:
