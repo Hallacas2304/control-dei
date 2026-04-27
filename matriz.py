@@ -59,7 +59,6 @@ def cargar():
 
 df = cargar()
 
-# Sesión para guardar archivos subidos temporalmente
 if "soportes" not in st.session_state:
     st.session_state.soportes = {}
 
@@ -78,9 +77,9 @@ def obtener_info_estado(fecha):
 # ---------------- ENVÍO TELEGRAM ----------------
 def enviar_telegram(lista):
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        return False, "Telegram no configurado en Secrets"
+        return False, "Telegram no configurado"
     if not lista:
-        return False, "No hay alertas para enviar"
+        return False, "No hay alertas"
     
     mensaje = "🚨 *CONTROL DOCUMENTAL DEI*\n" + "_" + datetime.now().strftime('%Y-%m-%d %H:%M') + "_\n\n" + "\n\n".join(lista)
     
@@ -89,93 +88,61 @@ def enviar_telegram(lista):
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
         )
-        return (True, "Enviado correctamente") if r.status_code == 200 else (False, f"Error: {r.status_code}")
+        return (True, "Enviado") if r.status_code == 200 else (False, f"Error {r.status_code}")
     except:
         return False, "Error de red"
 
-# ---------------- INTERFAZ (MENÚ) ----------------
+# ---------------- INTERFAZ ----------------
 menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Excel", "⚙️ Ajustes"], horizontal=True)
 
-# ================== 1. INICIO (Gestión de Documentos) ==================
+# --- INICIO ---
 if menu == "🏠 Inicio":
-    st.markdown('<div class="topbar">📂 GESTIÓN DE FUNCIONARIOS Y DOCUMENTOS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="topbar">📂 GESTIÓN DE DOCUMENTOS</div>', unsafe_allow_html=True)
     buscar = st.text_input("Filtrar por nombre...")
-
-    df_view = df.copy()
-    if buscar:
-        df_view = df_view[df_view["Nombre"].str.contains(buscar, case=False)]
+    df_view = df[df["Nombre"].str.contains(buscar, case=False)] if buscar else df
 
     for i, row in df_view.iterrows():
         with st.expander(f"👤 {row['Nombre']}"):
             c1, c2 = st.columns(2)
             with c1:
-                st.write("**Cargar Nuevo Documento:**")
                 f_up = st.file_uploader("Subir archivo", accept_multiple_files=True, key=f"file_{i}")
-                if f_up:
-                    st.session_state.soportes[row['Nombre']] = f_up
-                    st.success("Cargado en bandeja.")
-            
+                if f_up: st.session_state.soportes[row['Nombre']] = f_up
             with c2:
-                st.write("**Bandeja de Descargas:**")
                 if row['Nombre'] in st.session_state.soportes:
                     for f in st.session_state.soportes[row['Nombre']]:
                         st.download_button(f"⬇️ {f.name}", f.getvalue(), file_name=f.name, key=f"btn_{i}_{f.name}")
-                else:
-                    st.info("No hay archivos cargados.")
+                else: st.info("Sin archivos.")
 
-# ================== 2. ALERTAS (Semáforos) ==================
+# --- ALERTAS ---
 if menu == "🚨 Alertas":
     st.subheader("⚠️ Estado de Vencimientos")
-    
     for _, r in df.iterrows():
-        persona_vencida = False
-        # Verificamos si tiene algo vencido para resaltar
-        for doc in ["Licencia", "Tecno", "SOAT"]:
-            if pd.notna(r[doc]) and (r[doc].date() - hoy).days <= 5:
-                persona_vencida = True
-        
+        persona_vencida = any(pd.notna(r[c]) and (r[c].date() - hoy).days <= 5 for c in ["Licencia", "Tecno", "SOAT"])
         if persona_vencida:
-            with st.container():
-                st.markdown(f'<div class="card"><div class="nombre">{r["Nombre"]}</div>', unsafe_allow_html=True)
-                cols = st.columns(3)
-                for idx, doc in enumerate(["Licencia", "Tecno", "SOAT"]):
-                    txt, color, _ = obtener_info_estado(r[doc])
-                    cols[idx].markdown(f'<span class="semaforo {color}"></span>**{doc}**: {txt}', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card"><div class="nombre">{r["Nombre"]}</div>', unsafe_allow_html=True)
+            cols = st.columns(3)
+            for idx, doc in enumerate(["Licencia", "Tecno", "SOAT"]):
+                txt, color, _ = obtener_info_estado(r[doc])
+                cols[idx].markdown(f'<span class="semaforo {color}"></span>**{doc}**: {txt}', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-# ================== 3. DASHBOARD ==================
+# --- DASHBOARD ---
 if menu == "📊 Dashboard":
     st.subheader("📊 Análisis de Datos")
-    # Gráfico simple de vencimientos
-    vencidos = {
-        "SOAT": (df["SOAT"] < pd.to_datetime(hoy)).sum(),
-        "Tecno": (df["Tecno"] < pd.to_datetime(hoy)).sum(),
-        "Licencia": (df["Licencia"] < pd.to_datetime(hoy)).sum()
-    }
+    vencidos = {c: (df[c] < pd.to_datetime(hoy)).sum() for c in ["SOAT", "Tecno", "Licencia"]}
     st.bar_chart(pd.Series(vencidos))
 
-# ================== 4. EXCEL (Con Botón de Ocultar) ==================
+# --- EXCEL ---
 if menu == "✍️ Excel":
-    mostrar_editor = st.toggle("👁️ Ver/Editar base de datos", value=True)
-    
-    if mostrar_editor:
-        # Añadimos iconos de semáforo para la previsualización
-        df_excel = df.copy()
-        for col in ["Licencia", "Tecno", "SOAT"]:
-            df_excel[f"🚦 {col}"] = df_excel[col].apply(lambda x: obtener_info_estado(x)[2])
-        
-        editado = st.data_editor(df_excel, use_container_width=True)
-        
+    if st.toggle("👁️ Ver/Editar base de datos", value=True):
+        editado = st.data_editor(df, use_container_width=True)
         buf = BytesIO()
         editado.to_excel(buf, index=False)
-        st.download_button("📥 Descargar Excel con Reporte", buf.getvalue(), "control_dei.xlsx")
-    else:
-        st.info("El editor de Excel está oculto. Usa el botón superior para mostrarlo.")
+        st.download_button("📥 Descargar Excel", buf.getvalue(), "control_dei.xlsx")
 
-# ================== 5. AJUSTES (Telegram Automático y Manual) ==================
+# --- AJUSTES (CORREGIDO) ---
 if menu == "⚙️ Ajustes":
     st.subheader("⚙️ Configuración y Reportes")
-    
     ahora = datetime.now()
     st.info(f"🕒 Hora del servidor: {ahora.strftime('%H:%M:%S')}")
 
@@ -184,42 +151,33 @@ if menu == "⚙️ Ajustes":
         if "auto_dia" not in st.session_state or st.session_state.auto_dia != ahora.day:
             lista_auto = []
             for _, r in df.iterrows():
-                alertas_p = []
-                for c in ["Licencia", "Tecno", "SOAT"]:
-                    txt, _, ico = obtener_info_estado(r[c])
-                    if "VENCIDO" in txt or "PRÓXIMO" in txt:
-                        alertas_p.append(f"  {ico} {c}: {txt}")
-                if alertas_p:
-                    lista_auto.append(f"👤 *{r['Nombre']}*\n" + "\n".join(alertas_p))
-            
+                alertas_p = [f"  {obtener_info_estado(r[c])[2]} {c}: {obtener_info_estado(r[c])[0]}" 
+                           for c in ["Licencia", "Tecno", "SOAT"] 
+                           if "VENCIDO" in obtener_info_estado(r[c])[0] or "PRÓXIMO" in obtener_info_estado(r[c])[0]]
+                if alertas_p: lista_auto.append(f"👤 *{r['Nombre']}*\n" + "\n".join(alertas_p))
             if lista_auto:
                 enviar_telegram(lista_auto)
                 st.session_state.auto_dia = ahora.day
-                st.toast("Reporte de las 7 AM enviado.")
 
     st.divider()
-    
-    # BOTÓN DE ENVÍO MANUAL (ADICIONAL)
     st.subheader("📤 Enviar Reporte Manual")
-    st.write("Dispara un reporte inmediato a Telegram con todos los vencimientos detectados.")
     
     if st.button("🚀 Enviar a Telegram Ahora", key="manual_ajustes"):
         lista_m = []
         for _, r in df.iterrows():
-            alertas_p = []
-            for c in ["Licencia", "Tecno", "SOAT"]:
-                txt, _, ico = obtener_info_estado(r[c])
-                if "VENCIDO" in txt or "PRÓXIMO" in txt:
-                    alertas_p.append(f"  {ico} {c}: {txt}")
-            if alertas_p:
-                lista_m.append(f"👤 *{r['Nombre']}*\n" + "\n".join(alertas_p))
+            alertas_p = [f"  {obtener_info_estado(r[c])[2]} {c}: {obtener_info_estado(r[c])[0]}" 
+                       for c in ["Licencia", "Tecno", "SOAT"] 
+                       if "VENCIDO" in obtener_info_estado(r[c])[0] or "PRÓXIMO" in obtener_info_estado(r[c])[0]]
+            if alertas_p: lista_m.append(f"👤 *{r['Nombre']}*\n" + "\n".join(alertas_p))
         
         if lista_m:
-            with st.spinner("Conectando con Telegram..."):
-                ok, msg = enviar_telegram(lista_m)
-                st.success("✅ Reporte enviado.") if ok else st.error(f"❌ {msg}")
+            ok, msg = enviar_telegram(lista_m)
+            if ok:
+                st.success("✅ Reporte enviado correctamente.") # CORRECCIÓN AQUÍ
+            else:
+                st.error(f"❌ Error: {msg}")
         else:
-            st.info("No hay documentos vencidos para reportar.")
+            st.info("No hay documentos vencidos.")
 
     st.divider()
     if st.button("🔄 Refrescar base de datos"):
