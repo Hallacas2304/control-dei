@@ -8,7 +8,8 @@ import zipfile
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="DEI Control", layout="wide")
 
-EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
+# 🔥 LINK DIRECTO GOOGLE DRIVE (YA CORRECTO)
+EXCEL_URL = "https://docs.google.com/spreadsheets/d/1E0nFTEfPtrxPNK-fdSuq9hGMFDFN_znD/export?format=xlsx"
 
 try:
     TELEGRAM_TOKEN = st.secrets["TOKEN"]
@@ -59,18 +60,30 @@ body {
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- CARGA ----------------
+# ---------------- CARGA SEGURA ----------------
 @st.cache_data(ttl=120)
 def cargar():
-    r = requests.get(EXCEL_URL)
-    df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
+    try:
+        r = requests.get(EXCEL_URL)
+        r.raise_for_status()
+
+        df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
+
+    except Exception as e:
+        st.error("❌ Error cargando el Excel desde Google Drive")
+        st.stop()
 
     df.columns = df.columns.str.strip().str.lower()
 
-    nombre = next(c for c in df.columns if "nombre" in c)
-    lic = next(c for c in df.columns if "licencia" in c)
-    tec = next(c for c in df.columns if "tecno" in c)
-    soat = next(c for c in df.columns if "soat" in c)
+    # 🔥 detección flexible (para que no se rompa)
+    nombre = next((c for c in df.columns if "nombre" in c), None)
+    lic = next((c for c in df.columns if "licencia" in c), None)
+    tec = next((c for c in df.columns if "tecno" in c), None)
+    soat = next((c for c in df.columns if "soat" in c), None)
+
+    if not all([nombre, lic, tec, soat]):
+        st.error("❌ El Excel no tiene las columnas esperadas")
+        st.stop()
 
     df = df[[nombre, lic, tec, soat]]
     df.columns = ["Nombre", "Licencia", "Tecno", "SOAT"]
@@ -126,21 +139,18 @@ if menu == "🏠 Inicio":
 
     st.markdown('<div class="topbar">🔎 Buscador de funcionarios con alertas</div>', unsafe_allow_html=True)
 
-    buscar = st.text_input("Buscar funcionario (opcional)")
+    buscar = st.text_input("Buscar funcionario")
 
-    def tiene_alerta(r):
-        for c in ["Licencia", "Tecno", "SOAT"]:
-            if pd.notna(r[c]) and r[c].date() <= hoy:
-                return True
-        return False
+    def alerta(r):
+        return any(pd.notna(r[c]) and r[c].date() <= hoy for c in ["Licencia", "Tecno", "SOAT"])
 
     df2 = df.copy()
-    df2["ALERTA"] = df2.apply(tiene_alerta, axis=1)
+    df2["ALERTA"] = df2.apply(alerta, axis=1)
 
     if buscar:
         df2 = df2[df2["Nombre"].str.contains(buscar, case=False)]
     else:
-        df2 = df2[df2["ALERTA"] == True]
+        df2 = df2[df2["ALERTA"]]
 
     for i, row in df2.iterrows():
 
@@ -159,7 +169,6 @@ if menu == "🏠 Inicio":
         </div>
         """, unsafe_allow_html=True)
 
-        # 📎 SUBIR SOPORTES
         files = st.file_uploader(
             f"📎 Documentos de {nombre}",
             accept_multiple_files=True,
@@ -169,7 +178,6 @@ if menu == "🏠 Inicio":
         if files:
             st.session_state.soportes[nombre] = files
 
-        # 📦 DESCARGA ZIP
         if st.session_state.soportes.get(nombre):
 
             zip_buffer = BytesIO()
@@ -229,8 +237,6 @@ if menu == "✍️ Excel":
 if menu == "⚙️ Ajustes":
 
     st.subheader("⚙️ Panel del sistema")
-
-    st.write("📡 Estado de conexión")
 
     st.success("✔ Sistema activo")
 
