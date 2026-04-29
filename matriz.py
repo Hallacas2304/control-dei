@@ -1,164 +1,248 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, date
+from datetime import date
 from io import BytesIO
 import zipfile
-import firebase_admin
-from firebase_admin import credentials, firestore, storage
-import json
+import subprocess
+import sys
 
-# ---------------- FIREBASE INIT ----------------
-if not firebase_admin._apps:
-    cred = credentials.Certificate(json.loads(st.secrets["FIREBASE_CREDENTIALS"]))
-    firebase_admin.initialize_app(cred, {
-        'storageBucket': 'TU_BUCKET.appspot.com'
-    })
-
-db = firestore.client()
-bucket = storage.bucket()
+# ---------------- INSTALAR FIREBASE SI FALTA ----------------
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore, storage
+    FIREBASE_OK = True
+except ModuleNotFoundError:
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "firebase-admin"])
+        import firebase_admin
+        from firebase_admin import credentials, firestore, storage
+        FIREBASE_OK = True
+    except:
+        FIREBASE_OK = False
 
 # ---------------- CONFIG ----------------
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="DEI Control PRO", layout="wide")
+
+EXCEL_URL = "https://docs.google.com/spreadsheets/d/1E0nFTEfPtrxPNK-fdSuq9hGMFDFN_znD/gviz/tq?tqx=out:csv"
+
+TOKEN = st.secrets.get("TOKEN", "")
+CHAT_ID = st.secrets.get("CHAT_ID", "")
+
 hoy = date.today()
 
-TOKEN = st.secrets.get("TOKEN")
-CHAT_ID = st.secrets.get("CHAT_ID")
+# ---------------- FIREBASE INIT ----------------
+if FIREBASE_OK and "FIREBASE_CREDENTIALS" in st.secrets:
+    try:
+        import json
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(json.loads(st.secrets["FIREBASE_CREDENTIALS"]))
+            firebase_admin.initialize_app(cred, {
+                'storageBucket': 'tu-bucket.appspot.com'
+            })
+        db = firestore.client()
+        bucket = storage.bucket()
+    except:
+        FIREBASE_OK = False
 
-# ---------------- LOGIN ----------------
-def login(email, password):
-    # simulación simple (puedes conectar con API real de Firebase Auth)
-    user = db.collection("usuarios").where("email", "==", email).get()
-    return len(user) > 0
+# ---------------- ESTILO ----------------
+st.markdown("""
+<style>
+body { background: #0b1220; }
 
-if "user" not in st.session_state:
-    st.session_state.user = None
+.card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    padding: 14px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+    color: #0f172a;
+}
 
-if not st.session_state.user:
-    st.title("🔐 Login Corporativo")
+.nombre { font-size:18px; font-weight:bold; }
 
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+.rojo { color:#dc2626; font-weight:bold; }
+.amarillo { color:#d97706; font-weight:bold; }
+.verde { color:#16a34a; font-weight:bold; }
+</style>
+""", unsafe_allow_html=True)
 
-    if st.button("Ingresar"):
-        if login(email, password):
-            st.session_state.user = email
-            st.rerun()
-        else:
-            st.error("Acceso denegado")
-
-    st.stop()
-
-# ---------------- CARGA DESDE FIRESTORE ----------------
-@st.cache_data(ttl=60)
+# ---------------- CARGA ----------------
+@st.cache_data(ttl=120)
 def cargar():
-    docs = db.collection("funcionarios").stream()
-    data = []
+    df = pd.read_csv(EXCEL_URL)
+    df.columns = df.columns.str.strip().str.lower()
 
-    for d in docs:
-        r = d.to_dict()
-        data.append(r)
+    nombre = next(c for c in df.columns if "nombre" in c)
+    lic = next(c for c in df.columns if "licencia" in c)
+    tec = next(c for c in df.columns if "tecno" in c)
+    soat = next(c for c in df.columns if "soat" in c)
 
-    df = pd.DataFrame(data)
+    df = df[[nombre, lic, tec, soat]]
+    df.columns = ["Nombre", "Licencia", "Tecno", "SOAT"]
 
-    for c in ["Licencia","Tecno","SOAT"]:
+    for c in ["Licencia", "Tecno", "SOAT"]:
         df[c] = pd.to_datetime(df[c], errors="coerce")
 
     return df
 
 df = cargar()
 
+# ---------------- SOPORTES LOCAL ----------------
+if "soportes" not in st.session_state:
+    st.session_state.soportes = {}
+
 # ---------------- ESTADO ----------------
 def estado(fecha):
     if pd.isna(fecha):
-        return "COMUNICADO"
+        return "COMUNICADO", "amarillo"
     dias = (fecha.date() - hoy).days
-    if dias < 0: return "VENCIDO"
-    if dias <= 5: return "PRÓXIMO"
-    return "AL DÍA"
+    if dias < 0:
+        return "VENCIDO", "rojo"
+    elif dias <= 5:
+        return "PRÓXIMO", "amarillo"
+    return "AL DÍA", "verde"
 
 # ---------------- TELEGRAM ----------------
 def enviar_telegram(msg):
+    if not TOKEN or not CHAT_ID:
+        return False
     try:
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                      data={"chat_id": CHAT_ID, "text": msg})
+        r = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg}
+        )
+        return r.status_code == 200
     except:
-        pass
+        return False
 
 # ---------------- MENU ----------------
-menu = st.sidebar.selectbox("Menú", ["Inicio","Alertas","Soportes","Admin"])
+menu = st.radio("", ["🏠 Inicio","🚨 Alertas","📊 Dashboard","📁 Soportes","✍️ Datos","⚙️ Ajustes"], horizontal=True)
 
 # ---------------- INICIO ----------------
-if menu == "Inicio":
+if menu == "🏠 Inicio":
 
-    buscar = st.text_input("Buscar")
+    buscar = st.text_input("🔎 Buscar funcionario")
 
-    df2 = df[df["Nombre"].str.contains(buscar, case=False)] if buscar else df
+    df2 = df.copy()
+    if buscar:
+        df2 = df2[df2["Nombre"].str.contains(buscar, case=False)]
+    else:
+        df2 = df2[df2.apply(lambda r: any(pd.notna(r[c]) and r[c].date() <= hoy for c in ["Licencia","Tecno","SOAT"]), axis=1)]
 
-    for _, r in df2.iterrows():
-        st.write(f"### {r['Nombre']}")
-        st.write("Licencia:", estado(r["Licencia"]))
-        st.write("Tecno:", estado(r["Tecno"]))
-        st.write("SOAT:", estado(r["SOAT"]))
-        st.divider()
+    for i, row in df2.iterrows():
+
+        lic, lc = estado(row["Licencia"])
+        tec, tc = estado(row["Tecno"])
+        soa, sc = estado(row["SOAT"])
+
+        st.markdown(f"""
+        <div class="card">
+            <div class="nombre">{row['Nombre']}</div>
+            Licencia: <span class="{lc}">{lic}</span><br>
+            Tecno: <span class="{tc}">{tec}</span><br>
+            SOAT: <span class="{sc}">{soa}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        files = st.file_uploader("📎 Subir documentos", accept_multiple_files=True, key=i)
+
+        if files:
+            st.session_state.soportes[row["Nombre"]] = files
+
+        if st.session_state.soportes.get(row["Nombre"]):
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as z:
+                for f in st.session_state.soportes[row["Nombre"]]:
+                    z.writestr(f.name, f.getvalue())
+
+            st.download_button("⬇️ Descargar soportes", zip_buffer.getvalue(), f"{row['Nombre']}.zip")
 
 # ---------------- ALERTAS ----------------
-if menu == "Alertas":
+if menu == "🚨 Alertas":
 
     data = []
 
     for _, r in df.iterrows():
         for t in ["Licencia","Tecno","SOAT"]:
             f = r[t]
-            if pd.notna(f) and f.date() <= hoy:
-                data.append({
-                    "Nombre": r["Nombre"],
-                    "Documento": t,
-                    "Fecha": f.date()
-                })
+            if pd.notna(f):
+                dias = (f.date() - hoy).days
+                if dias < 0 or dias <= 5:
+                    estado_txt = "VENCIDO" if dias < 0 else "PRÓXIMO"
+                    data.append({
+                        "Funcionario": r["Nombre"],
+                        "Documento": t,
+                        "Fecha": f.date(),
+                        "Estado": estado_txt,
+                        "Días": dias
+                    })
 
     if data:
-        df_alertas = pd.DataFrame(data)
-        st.dataframe(df_alertas)
+        df_alertas = pd.DataFrame(data).sort_values(by="Días")
+        st.dataframe(df_alertas, use_container_width=True)
+    else:
+        st.success("Sin alertas")
 
-        if st.button("Enviar Telegram"):
-            msg = "\n".join([f"{x['Nombre']} → {x['Documento']}" for x in data])
-            enviar_telegram(msg)
+    if st.button("📲 Enviar Telegram"):
+        if data:
+            msg = "🚨 ALERTAS\n\n"
+            for d in data:
+                msg += f"{d['Funcionario']} → {d['Documento']} ({d['Estado']} {d['Fecha']})\n"
 
-# ---------------- SOPORTES CLOUD ----------------
-if menu == "Soportes":
+            if enviar_telegram(msg):
+                st.success("Mensaje enviado")
+            else:
+                st.error("No se pudo enviar")
 
-    nombre = st.selectbox("Funcionario", df["Nombre"])
+# ---------------- DASHBOARD ----------------
+if menu == "📊 Dashboard":
 
-    files = st.file_uploader("Subir", accept_multiple_files=True)
+    st.bar_chart(pd.DataFrame({
+        "Tipo":["SOAT","Tecno","Licencia"],
+        "Vencidos":[
+            (df["SOAT"] < pd.to_datetime(hoy)).sum(),
+            (df["Tecno"] < pd.to_datetime(hoy)).sum(),
+            (df["Licencia"] < pd.to_datetime(hoy)).sum()
+        ]
+    }).set_index("Tipo"))
 
-    if files:
-        for f in files:
-            blob = bucket.blob(f"{nombre}/{f.name}")
-            blob.upload_from_string(f.getvalue())
-        st.success("Subido a la nube")
+# ---------------- SOPORTES CLOUD (SI FIREBASE OK) ----------------
+if menu == "📁 Soportes":
 
-    blobs = bucket.list_blobs(prefix=nombre)
+    if not FIREBASE_OK:
+        st.warning("Firebase no activo, usando almacenamiento local")
+    else:
+        nombre = st.selectbox("Funcionario", df["Nombre"])
 
-    for b in blobs:
-        url = b.generate_signed_url(datetime.timedelta(seconds=3600))
-        st.write(f"[Descargar {b.name}]({url})")
+        files = st.file_uploader("Subir a la nube", accept_multiple_files=True)
 
-# ---------------- ADMIN ----------------
-if menu == "Admin":
+        if files:
+            for f in files:
+                blob = bucket.blob(f"{nombre}/{f.name}")
+                blob.upload_from_string(f.getvalue())
+            st.success("Subido a la nube")
 
-    st.subheader("Agregar funcionario")
+# ---------------- DATOS ----------------
+if menu == "✍️ Datos":
 
-    nombre = st.text_input("Nombre")
-    lic = st.date_input("Licencia")
-    tec = st.date_input("Tecno")
-    soat = st.date_input("SOAT")
+    edit = st.data_editor(df)
 
-    if st.button("Guardar"):
-        db.collection("funcionarios").add({
-            "Nombre": nombre,
-            "Licencia": lic.isoformat(),
-            "Tecno": tec.isoformat(),
-            "SOAT": soat.isoformat()
-        })
-        st.success("Guardado")
+    csv = edit.to_csv(index=False).encode("utf-8")
+
+    st.download_button("⬇️ Descargar CSV", csv, "base.csv")
+
+# ---------------- AJUSTES ----------------
+if menu == "⚙️ Ajustes":
+
+    st.success("Sistema activo")
+
+    if TOKEN:
+        st.success("Telegram activo")
+    else:
+        st.warning("Telegram no configurado")
+
+    if FIREBASE_OK:
+        st.success("Firebase conectado")
+    else:
+        st.warning("Firebase no disponible")
