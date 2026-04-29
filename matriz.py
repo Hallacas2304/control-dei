@@ -8,8 +8,8 @@ import zipfile
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="DEI Control", layout="wide")
 
-# 🔥 LINK DIRECTO GOOGLE DRIVE (YA CORRECTO)
-EXCEL_URL = "https://docs.google.com/spreadsheets/d/1E0nFTEfPtrxPNK-fdSuq9hGMFDFN_znD/export?format=xlsx"
+# 🔥 GOOGLE SHEETS EN FORMATO CSV (ESTABLE)
+EXCEL_URL = "https://docs.google.com/spreadsheets/d/1E0nFTEfPtrxPNK-fdSuq9hGMFDFN_znD/gviz/tq?tqx=out:csv"
 
 try:
     TELEGRAM_TOKEN = st.secrets["TOKEN"]
@@ -60,29 +60,24 @@ body {
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- CARGA SEGURA ----------------
+# ---------------- CARGA CSV ----------------
 @st.cache_data(ttl=120)
 def cargar():
     try:
-        r = requests.get(EXCEL_URL)
-        r.raise_for_status()
-
-        df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
-
-    except Exception as e:
-        st.error("❌ Error cargando el Excel desde Google Drive")
+        df = pd.read_csv(EXCEL_URL)
+    except:
+        st.error("❌ Error cargando datos desde Google Sheets")
         st.stop()
 
     df.columns = df.columns.str.strip().str.lower()
 
-    # 🔥 detección flexible (para que no se rompa)
     nombre = next((c for c in df.columns if "nombre" in c), None)
     lic = next((c for c in df.columns if "licencia" in c), None)
     tec = next((c for c in df.columns if "tecno" in c), None)
     soat = next((c for c in df.columns if "soat" in c), None)
 
     if not all([nombre, lic, tec, soat]):
-        st.error("❌ El Excel no tiene las columnas esperadas")
+        st.error("❌ El archivo no tiene las columnas necesarias")
         st.stop()
 
     df = df[[nombre, lic, tec, soat]]
