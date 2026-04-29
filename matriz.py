@@ -1,130 +1,257 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 import requests
+from datetime import date
 from io import BytesIO
+import zipfile
 
-# --- 1. ESTILO INSTITUCIONAL Y SEMÁFORO ---
-st.set_page_config(page_title="GUDMO 16 - MANDO TOTAL", layout="wide")
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="DEI Control", layout="wide")
 
+EXCEL_URL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQBJ321DA_EpQq6ktF9F1qMjAd8YHNp-UUwLG-uAsvmaFm8?download=1"
+
+try:
+    TELEGRAM_TOKEN = st.secrets["TOKEN"]
+    CHAT_ID = st.secrets["CHAT_ID"]
+except:
+    TELEGRAM_TOKEN = ""
+    CHAT_ID = ""
+
+hoy = date.today()
+
+# ---------------- ESTILO ----------------
 st.markdown("""
-    <style>
-    .stApp { background-color: #050b14; color: #e0e6ed; }
-    .card {
-        padding: 20px; border-radius: 15px; margin-bottom: 15px;
-        background: rgba(255, 255, 255, 0.05);
-        border-left: 10px solid;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
-    }
-    .vencido { border-left-color: #ff003c; border-right: 1px solid #ff003c33; }
-    .al-dia { border-left-color: #00ff9d; border-right: 1px solid #00ff9d33; }
-    [data-testid="stMetricValue"] { color: #00d4ff !important; }
-    .stMetric { background: rgba(255,255,255,0.03); padding: 15px; border-radius: 12px; border: 1px solid #1f2937; }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+body {
+    background: #0b1220;
+    color: #e5e7eb;
+}
 
-# --- 2. CONFIGURACIÓN DE ENLACES Y TOKENS ---
-TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
-CHAT_ID = "8081331013"
-URL_MATRIZ = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQCCZGsB1iWWSJAoFXkDTUhbAUamuiPdwJbuvD4YBw37ubc?download=1"
+.card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    padding: 14px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+    color: #0f172a;
+}
 
-@st.cache_data(ttl=1)
-def cargar_base_datos():
-    try:
-        r = requests.get(URL_MATRIZ, timeout=25)
-        return pd.read_excel(BytesIO(r.content), engine='openpyxl')
-    except: return None
+.nombre {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0f172a;
+}
 
-# --- 3. LÓGICA DE CONTROL DE DOCUMENTOS ---
-df = cargar_base_datos()
+.badge-rojo { color:#dc2626; font-weight:bold; }
+.badge-amarillo { color:#d97706; font-weight:bold; }
+.badge-verde { color:#16a34a; font-weight:bold; }
 
-if df is not None:
-    hoy = pd.Timestamp(date.today())
-    personal_total = []
-    alertas_criticas = 0
+.topbar {
+    background:#111827;
+    padding:10px;
+    border-radius:10px;
+    margin-bottom:15px;
+    color:white;
+}
 
-    for i in range(len(df)):
-        fila = df.iloc[i]
-        nombre = str(fila.iloc[0]).strip().upper()
-        if nombre in ["NAN", "NONE", ""] or "APELLIDOS" in nombre or nombre.replace('.','').isdigit(): continue
-        
-        docs = []
-        es_novedad = False
-        # Columnas B(1), C(2), D(3)
-        for t, col in [("LICENCIA", 1), ("TECNO", 2), ("SOAT", 3)]:
-            try:
-                f = pd.to_datetime(fila.iloc[col], errors='coerce')
-                if pd.notna(f) and f.year > 2000:
-                    vencido = f.date() <= hoy.date()
-                    if vencido: es_novedad = True
-                    docs.append({"tipo": t, "fecha": f.date(), "status": vencido})
-            except: continue
-        
-        if docs:
-            personal_total.append({"nombre": nombre, "docs": docs, "novedad": es_novedad})
-            if es_novedad: alertas_criticas += 1
+#MainMenu, footer, header {visibility:hidden;}
+.block-container {padding-top:1rem;}
+</style>
+""", unsafe_allow_html=True)
 
-    # --- 4. PANEL VISUAL (DASHBOARD) ---
-    st.title("🛡️ COMMAND CENTER GUDMO 16")
-    
-    # MÉTRICAS ESTILO SEMÁFORO
-    c1, c2, c3 = st.columns(3)
-    c1.metric("FUERZA TOTAL", len(personal_total))
-    c2.metric("ALERTA ROJA", alertas_criticas, delta=f"{alertas_criticas} VENCIDOS", delta_color="inverse")
-    c3.metric("FUERZA DISPONIBLE", len(personal_total) - alertas_criticas)
+# ---------------- CARGA ----------------
+@st.cache_data(ttl=120)
+def cargar():
+    r = requests.get(EXCEL_URL)
+    df = pd.read_excel(BytesIO(r.content), engine="openpyxl")
+
+    df.columns = df.columns.str.strip().str.lower()
+
+    nombre = next(c for c in df.columns if "nombre" in c)
+    lic = next(c for c in df.columns if "licencia" in c)
+    tec = next(c for c in df.columns if "tecno" in c)
+    soat = next(c for c in df.columns if "soat" in c)
+
+    df = df[[nombre, lic, tec, soat]]
+    df.columns = ["Nombre", "Licencia", "Tecno", "SOAT"]
+
+    for c in ["Licencia", "Tecno", "SOAT"]:
+        df[c] = pd.to_datetime(df[c], errors="coerce")
+
+    return df
+
+df = cargar()
+
+# ---------------- SOPORTES ----------------
+if "soportes" not in st.session_state:
+    st.session_state.soportes = {}
+
+# ---------------- ESTADO ----------------
+def estado(fecha):
+    if pd.isna(fecha):
+        return "COMUNICADO", "badge-amarillo"
+    dias = (fecha.date() - hoy).days
+    if dias < 0:
+        return "VENCIDO", "badge-rojo"
+    elif dias <= 5:
+        return "PRÓXIMO", "badge-amarillo"
+    return "AL DÍA", "badge-verde"
+
+# ---------------- TELEGRAM ----------------
+def enviar_telegram(lista):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return False, "Telegram no configurado"
+
+    if not lista:
+        return False, "Sin alertas"
+
+    mensaje = "🚨 *ALERTAS DOCUMENTALES*\n\n" + "\n".join(lista)
+
+    r = requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        data={
+            "chat_id": CHAT_ID,
+            "text": mensaje,
+            "parse_mode": "Markdown"
+        }
+    )
+
+    return (True, "Enviado a Telegram") if r.status_code == 200 else (False, r.text)
+
+# ---------------- MENU ----------------
+menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Excel", "⚙️ Ajustes"], horizontal=True)
+
+# ================== INICIO ==================
+if menu == "🏠 Inicio":
+
+    st.markdown('<div class="topbar">🔎 Buscador de funcionarios con alertas</div>', unsafe_allow_html=True)
+
+    buscar = st.text_input("Buscar funcionario (opcional)")
+
+    def tiene_alerta(r):
+        for c in ["Licencia", "Tecno", "SOAT"]:
+            if pd.notna(r[c]) and r[c].date() <= hoy:
+                return True
+        return False
+
+    df2 = df.copy()
+    df2["ALERTA"] = df2.apply(tiene_alerta, axis=1)
+
+    if buscar:
+        df2 = df2[df2["Nombre"].str.contains(buscar, case=False)]
+    else:
+        df2 = df2[df2["ALERTA"] == True]
+
+    for i, row in df2.iterrows():
+
+        nombre = row["Nombre"]
+
+        lic, lic_c = estado(row["Licencia"])
+        tec, tec_c = estado(row["Tecno"])
+        soa, soa_c = estado(row["SOAT"])
+
+        st.markdown(f"""
+        <div class="card">
+            <div class="nombre">{nombre}</div>
+            Licencia: <span class="{lic_c}">{lic}</span><br>
+            Tecno: <span class="{tec_c}">{tec}</span><br>
+            SOAT: <span class="{soa_c}">{soa}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 📎 SUBIR SOPORTES
+        files = st.file_uploader(
+            f"📎 Documentos de {nombre}",
+            accept_multiple_files=True,
+            key=f"file_{i}"
+        )
+
+        if files:
+            st.session_state.soportes[nombre] = files
+
+        # 📦 DESCARGA ZIP
+        if st.session_state.soportes.get(nombre):
+
+            zip_buffer = BytesIO()
+
+            with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                for f in st.session_state.soportes[nombre]:
+                    zipf.writestr(f.name, f.getvalue())
+
+            st.download_button(
+                "⬇️ Descargar soportes",
+                zip_buffer.getvalue(),
+                file_name=f"{nombre}_soportes.zip"
+            )
+
+# ================== ALERTAS ==================
+if menu == "🚨 Alertas":
+
+    lista = []
+
+    for _, r in df.iterrows():
+        for c in ["Licencia", "Tecno", "SOAT"]:
+            if pd.notna(r[c]) and r[c].date() <= hoy:
+                lista.append(f"{r['Nombre']} → {c} vencido o próximo")
+
+    if lista:
+        st.error("\n".join(lista))
+    else:
+        st.success("Sin alertas 🚀")
+
+    if st.button("📲 Enviar a Telegram"):
+        ok, msg = enviar_telegram(lista)
+        st.success(msg) if ok else st.error(msg)
+
+# ================== DASHBOARD ==================
+if menu == "📊 Dashboard":
+
+    st.bar_chart(pd.DataFrame({
+        "Tipo": ["SOAT", "Tecno", "Licencia"],
+        "Vencidos": [
+            (df["SOAT"] < pd.to_datetime(hoy)).sum(),
+            (df["Tecno"] < pd.to_datetime(hoy)).sum(),
+            (df["Licencia"] < pd.to_datetime(hoy)).sum()
+        ]
+    }).set_index("Tipo"))
+
+# ================== EXCEL ==================
+if menu == "✍️ Excel":
+
+    edit = st.data_editor(df, use_container_width=True)
+
+    buffer = BytesIO()
+    edit.to_excel(buffer, index=False)
+
+    st.download_button("⬇️ Descargar Excel", buffer.getvalue(), "base.xlsx")
+
+# ================== AJUSTES ==================
+if menu == "⚙️ Ajustes":
+
+    st.subheader("⚙️ Panel del sistema")
+
+    st.write("📡 Estado de conexión")
+
+    st.success("✔ Sistema activo")
+
+    if TELEGRAM_TOKEN and CHAT_ID:
+        st.success("✔ Telegram configurado")
+    else:
+        st.warning("⚠ Telegram no configurado")
 
     st.divider()
 
-    # BUSCADOR Y DESCARGAS
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        busqueda = st.text_input("🔍 RASTREAR UNIFORMADO", placeholder="Escriba apellido...").upper()
-    with col_b:
-        st.download_button("📥 DESCARGAR MATRIZ ACTUAL", df.to_csv(index=False).encode('utf-8'), "matriz_gudmo.csv")
+    if st.button("📲 Enviar reporte completo a Telegram"):
 
-    # GESTIÓN DE ARCHIVOS
-    with st.expander("📂 ACTUALIZAR DOCUMENTACIÓN INSTITUCIONAL"):
-        upload = st.file_uploader("Cargar nueva matriz (Formato Excel)", type=["xlsx"])
-        if upload: st.success("Archivo verificado. Listo para sincronizar.")
+        lista = []
 
-    # VISTA DE FUNCIONARIOS (TARJETAS)
-    st.subheader("📋 ESTADO INDIVIDUAL")
-    col_izq, col_der = st.columns(2)
-    idx = 0
+        for _, r in df.iterrows():
+            for c in ["Licencia", "Tecno", "SOAT"]:
+                if pd.notna(r[c]) and r[c].date() <= hoy:
+                    lista.append(f"{r['Nombre']} → {c} vencido/próximo")
 
-    for p in personal_total:
-        if busqueda and busqueda not in p["nombre"]: continue
-        
-        idx += 1
-        clase = "vencido" if p["novedad"] else "al-dia"
-        emoji = "🚨" if p["novedad"] else "✅"
-        
-        with (col_izq if idx % 2 != 0 else col_der):
-            html = f'<div class="card {clase}"><b>{emoji} {p["nombre"]}</b><br><hr style="opacity:0.1">'
-            for d in p["docs"]:
-                color = "#ff4b4b" if d["status"] else "#00ff9d"
-                html += f'<span style="color:{color}">• {d["tipo"]}: {d["fecha"]}</span><br>'
-            html += '</div>'
-            st.markdown(html, unsafe_allow_html=True)
-
-    # --- 5. ALARMAS TELEGRAM ---
-    st.sidebar.title("📡 SISTEMA DE ALERTAS")
-    if st.sidebar.button("🚀 ENVIAR NOVEDADES A TELEGRAM", use_container_width=True):
-        msg = f"🚨 *REPORTE GUDMO 16 - {hoy.date()}*\n\n"
-        hay_novedad = False
-        for p in personal_total:
-            if p["novedad"]:
-                hay_novedad = True
-                msg += f"👤 *{p['nombre']}*\n"
-                for d in p["docs"]:
-                    if d["status"]: msg += f"  ❌ {d['tipo']}: {d['fecha']}\n"
-                msg += "\n"
-        
-        if not hay_novedad: msg += "✅ TODO EL PERSONAL AL DÍA."
-        
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
-                      data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-        st.sidebar.success("Alerta enviada al grupo.")
-        st.balloons()
-else:
-    st.error("FATAL ERROR: Fallo de enlace con SharePoint. Verifique conexión.")
+        if lista:
+            ok, msg = enviar_telegram(lista)
+            st.success(msg) if ok else st.error(msg)
+        else:
+            st.info("No hay alertas para enviar")
