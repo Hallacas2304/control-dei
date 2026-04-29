@@ -4,132 +4,144 @@ from datetime import date
 import requests
 from io import BytesIO
 
-# 1. CONFIGURACIÓN DE INTERFAZ TECNOLÓGICA
-st.set_page_config(page_title="GUDMO 16 - COMMAND CENTER", layout="wide")
+# --- 1. CONFIGURACIÓN ELITE Y ESTILOS ---
+st.set_page_config(page_title="GUDMO 16 - SISTEMA INTEGRAL", layout="wide")
 
 st.markdown("""
     <style>
     .stApp { background-color: #050b14; color: #e0e6ed; }
+    /* Tarjetas Tipo Cristal */
     .card {
         padding: 20px; border-radius: 15px; margin-bottom: 15px;
         background: rgba(255, 255, 255, 0.05);
-        border-left: 8px solid;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
     }
-    .vencido { border-left-color: #ff003c; border-right: 1px solid #ff003c33; }
-    .al-dia { border-left-color: #00ff9d; border-right: 1px solid #00ff9d33; }
-    .stMetric { background: rgba(255,255,255,0.05); padding: 15px; border-radius: 12px; border: 1px solid #1f2937; }
+    .vencido { border-left: 10px solid #ff003c; border-right: 2px solid #ff003c; }
+    .al-dia { border-left: 10px solid #00ff9d; border-right: 2px solid #00ff9d; }
+    /* Métricas Neón */
+    [data-testid="stMetricValue"] { color: #00d4ff !important; font-size: 35px !important; }
+    .stMetric { background: rgba(255,255,255,0.03); padding: 20px; border-radius: 15px; border: 1px solid #1f2937; }
+    /* Botones Pro */
+    .stButton>button {
+        width: 100%; background: linear-gradient(45deg, #004e92, #000428);
+        color: white; border: 1px solid #00d4ff; border-radius: 8px; height: 50px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. CREDENCIALES Y ENLACE DE EXCEL
+# --- 2. CONFIGURACIÓN DE DATOS ---
 TOKEN = "8620464199:AAHgiGA3tGhMTpmipc7XsTtSptyF-NHjHMg"
 CHAT_ID = "8081331013"
-URL_EXCEL = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQCCZGsB1iWWSJAoFXkDTUhbAUamuiPdwJbuvD4YBw37ubc?download=1"
+URL_BASE = "https://correopoliciagov-my.sharepoint.com/:x:/g/personal/omar_vela3592_correo_policia_gov_co/IQCCZGsB1iWWSJAoFXkDTUhbAUamuiPdwJbuvD4YBw37ubc?download=1"
 
 @st.cache_data(ttl=1)
-def descargar_datos():
+def fetch_data():
     try:
-        # Descarga directa desde SharePoint
-        r = requests.get(URL_EXCEL, timeout=25)
-        # Cargamos el Excel. Pandas usará openpyxl internamente (debe estar en requirements.txt)
-        df = pd.read_excel(BytesIO(r.content), engine='openpyxl')
-        return df
-    except Exception as e:
-        st.error(f"Error de conexión con la base de datos: {e}")
-        return None
+        r = requests.get(URL_BASE, timeout=25)
+        return pd.read_excel(BytesIO(r.content), engine='openpyxl')
+    except: return None
 
-# 3. PROCESAMIENTO E INTERFAZ
-df = descargar_datos()
+# --- 3. LOGICA DE CONTROL ---
+df = fetch_data()
 
 if df is not None:
     hoy = pd.Timestamp(date.today())
-    personal_data = []
-    vencidos_conteo = 0
+    personal_total = []
+    vencidos_count = 0
 
-    # Limpieza y escaneo de la matriz
+    # Procesar Matriz
     for i in range(len(df)):
         fila = df.iloc[i]
         nombre = str(fila.iloc[0]).strip().upper()
+        if nombre in ["NAN", "NONE", ""] or "APELLIDOS" in nombre or nombre.replace('.','').isdigit(): continue
         
-        # Filtro de seguridad para ignorar basura y filas vacías
-        if nombre in ["NAN", "NONE", ""] or "APELLIDOS" in nombre or nombre.replace('.','').isdigit():
-            continue
-            
-        docs_status = []
-        es_novedad = False
-        
-        # Columnas: B(1)=Licencia, C(2)=Tecno, D(3)=SOAT
-        for titulo, col_idx in [("LICENCIA", 1), ("TECNO", 2), ("SOAT", 3)]:
+        docs = []
+        is_novedad = False
+        for tag, col in [("LICENCIA", 1), ("TECNO", 2), ("SOAT", 3)]:
             try:
-                f_vence = pd.to_datetime(fila.iloc[col_idx], errors='coerce')
-                if pd.notna(f_vence) and f_vence.year > 2000:
-                    vence_date = f_vence.date()
-                    esta_vencido = vence_date <= hoy.date()
-                    if esta_vencido: es_novedad = True
-                    docs_status.append({"tipo": titulo, "fecha": vence_date, "vencido": esta_vencido})
+                f = pd.to_datetime(fila.iloc[col], errors='coerce')
+                if pd.notna(f) and f.year > 2000:
+                    v = f.date() <= hoy.date()
+                    if v: is_novedad = True
+                    docs.append({"label": tag, "fecha": f.date(), "status": v})
             except: continue
         
-        personal_data.append({"nombre": nombre, "docs": docs_status, "novedad": es_novedad})
-        if es_novedad: vencidos_conteo += 1
+        if docs:
+            personal_total.append({"nombre": nombre, "docs": docs, "novedad": is_novedad})
+            if is_novedad: vencidos_count += 1
 
-    # RENDERIZADO DE PANTALLA
+    # --- 4. PANEL DE CONTROL (INTERFAZ) ---
     st.title("🛡️ COMMAND CENTER GUDMO 16")
     
-    # Métricas de Mando
+    # SEMÁFORO DE MANDO
     m1, m2, m3 = st.columns(3)
-    m1.metric("TOTAL PERSONAL", len(personal_data))
-    m2.metric("ALERTAS CRÍTICAS", vencidos_conteo, delta=f"{vencidos_conteo} VENCIMIENTOS", delta_color="inverse")
-    m3.metric("EN REGLA", len(personal_data) - vencidos_conteo)
+    m1.metric("FUERZA TOTAL", len(personal_total))
+    m2.metric("NOVEDADES", vencidos_count, delta=f"{vencidos_count} CRÍTICOS", delta_color="inverse")
+    m3.metric("EN REGLA", len(personal_total) - vencidos_count)
 
     st.divider()
-    
-    # Buscador Activo
-    busqueda = st.text_input("🔍 BUSCAR FUNCIONARIO (APELLIDOS / NOMBRES)").upper()
 
-    # Despliegue de Tarjetas
-    c_izq, c_der = st.columns(2)
-    mostrados = 0
+    # ZONA DE OPERACIONES (Buscador y Archivos)
+    col_bus, col_file = st.columns([2, 1])
+    with col_bus:
+        search = st.text_input("🔍 RASTREADOR DE PERSONAL", placeholder="Ingrese apellidos...").upper()
+    with col_file:
+        # Descarga de la matriz actual
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 DESCARGAR MATRIZ", csv, "matriz_gudmo.csv", "text/csv")
 
-    for p in personal_data:
-        if busqueda and busqueda not in p["nombre"]: continue
+    # CARGA DE DOCUMENTOS (Opcional en interfaz)
+    with st.expander("📂 SUBIR / ACTUALIZAR DOCUMENTACIÓN"):
+        uploaded_file = st.file_uploader("Cargar nueva matriz (Excel)", type=["xlsx"])
+        if uploaded_file: st.success("Archivo listo para procesamiento.")
+
+    # VISTA DE TARJETAS
+    st.subheader("📋 ESTADO DE LA FUERZA")
+    c1, c2 = st.columns(2)
+    display_idx = 0
+
+    for p in personal_total:
+        if search and search not in p["nombre"]: continue
         
-        mostrados += 1
+        display_idx += 1
         clase = "vencido" if p["novedad"] else "al-dia"
-        emoji = "🚨" if p["novedad"] else "✅"
+        icon = "🚨" if p["novedad"] else "✅"
         
-        with (c_izq if mostrados % 2 != 0 else c_der):
-            card_html = f'<div class="card {clase}"><b>{emoji} {p["nombre"]}</b><br><hr style="opacity:0.1">'
+        with (c1 if display_idx % 2 != 0 else c2):
+            html = f'<div class="card {clase}"><b>{icon} {p["nombre"]}</b><br><hr style="opacity:0.1">'
             for d in p["docs"]:
-                color = "#ff4b4b" if d["vencido"] else "#00ff9d"
-                card_html += f'<span style="color:{color}">• {d["tipo"]}: {d["fecha"]}</span><br>'
-            card_html += '</div>'
-            st.markdown(card_html, unsafe_allow_html=True)
+                color = "#ff4b4b" if d["status"] else "#00ff9d"
+                html += f'<span style="color:{color}">• {d["label"]}: {d["fecha"]}</span><br>'
+            html += '</div>'
+            st.markdown(html, unsafe_allow_html=True)
 
-    # 4. SISTEMA DE REPORTES TELEGRAM
-    st.sidebar.title("📤 COMUNICACIONES")
-    if st.sidebar.button("🚀 ENVIAR REPORTE A TELEGRAM", use_container_width=True):
-        msg = f"🚨 *GUDMO 16 - REPORTE DE NOVEDADES*\n📅 *Fecha:* {hoy.date()}\n\n"
-        novedades_encontradas = False
+    # --- 5. SISTEMA DE ALARMAS TELEGRAM ---
+    st.sidebar.title("📡 CANAL DE ALARMAS")
+    st.sidebar.info("Envía el reporte detallado al grupo de mando.")
+    
+    if st.sidebar.button("🚀 DISPARAR ALERTA TELEGRAM", use_container_width=True):
+        mensaje = f"🚨 *GUDMO 16 - REPORTE DE NOVEDADES*\n📅 *FECHA:* {hoy.date()}\n"
+        mensaje += "----------------------------------\n\n"
         
-        for p in personal_data:
+        found = False
+        for p in personal_total:
             if p["novedad"]:
-                novedades_encontradas = True
-                msg += f"👤 *{p['nombre']}*\n"
+                found = True
+                mensaje += f"👤 *{p['nombre']}*\n"
                 for d in p["docs"]:
-                    if d["vencido"]: msg += f"  ❌ {d['tipo']}: {d['fecha']}\n"
-                msg += "\n"
+                    if d["status"]: mensaje += f" ❌ {d['label']}: {d['fecha']}\n"
+                mensaje += "\n"
         
-        if not novedades_encontradas:
-            msg += "✅ *SIN NOVEDADES:* Todo el personal se encuentra al día."
+        if not found: mensaje += "✅ *SIN NOVEDADES:* Todo el personal al día."
         
         try:
             requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", 
-                          data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"})
-            st.sidebar.success("Reporte enviado al grupo.")
+                          data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"})
+            st.sidebar.success("¡Alerta enviada!")
             st.balloons()
         except:
-            st.sidebar.error("Error al conectar con Telegram.")
+            st.sidebar.error("Falla en el enlace satelital (Telegram).")
 
 else:
-    st.error("No se pudo cargar la base de datos. Verifique la conexión a SharePoint.")
+    st.error("FATAL ERROR: No se detecta la matriz en SharePoint. Verifique el enlace.")
