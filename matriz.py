@@ -32,18 +32,27 @@ CHAT_ID = st.secrets.get("CHAT_ID", "")
 hoy = date.today()
 
 # ---------------- FIREBASE INIT ----------------
+FIREBASE_ERROR = ""
+
 if FIREBASE_OK and "FIREBASE_CREDENTIALS" in st.secrets:
     try:
         import json
+
         if not firebase_admin._apps:
             cred = credentials.Certificate(json.loads(st.secrets["FIREBASE_CREDENTIALS"]))
+
             firebase_admin.initialize_app(cred, {
-                'storageBucket': 'tu-bucket.appspot.com'
+                'storageBucket': 'TU_BUCKET_REAL.appspot.com'  # 👈 CAMBIA ESTO
             })
+
         db = firestore.client()
         bucket = storage.bucket()
-    except:
+
+    except Exception as e:
         FIREBASE_OK = False
+        FIREBASE_ERROR = str(e)
+else:
+    FIREBASE_OK = False
 
 # ---------------- ESTILO ----------------
 st.markdown("""
@@ -70,7 +79,12 @@ body { background: #0b1220; }
 # ---------------- CARGA ----------------
 @st.cache_data(ttl=120)
 def cargar():
-    df = pd.read_csv(EXCEL_URL)
+    try:
+        df = pd.read_csv(EXCEL_URL)
+    except:
+        st.error("❌ Error cargando Google Sheets")
+        st.stop()
+
     df.columns = df.columns.str.strip().str.lower()
 
     nombre = next(c for c in df.columns if "nombre" in c)
@@ -207,11 +221,14 @@ if menu == "📊 Dashboard":
         ]
     }).set_index("Tipo"))
 
-# ---------------- SOPORTES CLOUD (SI FIREBASE OK) ----------------
+# ---------------- SOPORTES CLOUD ----------------
 if menu == "📁 Soportes":
 
     if not FIREBASE_OK:
-        st.warning("Firebase no activo, usando almacenamiento local")
+        st.warning("⚠ Firebase no activo")
+        if FIREBASE_ERROR:
+            with st.expander("Ver error técnico"):
+                st.code(FIREBASE_ERROR)
     else:
         nombre = st.selectbox("Funcionario", df["Nombre"])
 
@@ -221,13 +238,12 @@ if menu == "📁 Soportes":
             for f in files:
                 blob = bucket.blob(f"{nombre}/{f.name}")
                 blob.upload_from_string(f.getvalue())
-            st.success("Subido a la nube")
+            st.success("Subido a Firebase")
 
 # ---------------- DATOS ----------------
 if menu == "✍️ Datos":
 
     edit = st.data_editor(df)
-
     csv = edit.to_csv(index=False).encode("utf-8")
 
     st.download_button("⬇️ Descargar CSV", csv, "base.csv")
@@ -246,3 +262,7 @@ if menu == "⚙️ Ajustes":
         st.success("Firebase conectado")
     else:
         st.warning("Firebase no disponible")
+
+        if FIREBASE_ERROR:
+            st.error("Error detectado:")
+            st.code(FIREBASE_ERROR)
