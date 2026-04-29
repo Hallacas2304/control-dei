@@ -8,7 +8,7 @@ import zipfile
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="DEI Control", layout="wide")
 
-# 🔥 GOOGLE SHEETS EN FORMATO CSV (ESTABLE)
+# 🔥 GOOGLE SHEETS COMO CSV (ESTABLE)
 EXCEL_URL = "https://docs.google.com/spreadsheets/d/1E0nFTEfPtrxPNK-fdSuq9hGMFDFN_znD/gviz/tq?tqx=out:csv"
 
 try:
@@ -23,10 +23,7 @@ hoy = date.today()
 # ---------------- ESTILO ----------------
 st.markdown("""
 <style>
-body {
-    background: #0b1220;
-    color: #e5e7eb;
-}
+body { background: #0b1220; color: #e5e7eb; }
 
 .card {
     background: #ffffff;
@@ -37,11 +34,7 @@ body {
     color: #0f172a;
 }
 
-.nombre {
-    font-size: 18px;
-    font-weight: 700;
-    color: #0f172a;
-}
+.nombre { font-size: 18px; font-weight: 700; color: #0f172a; }
 
 .badge-rojo { color:#dc2626; font-weight:bold; }
 .badge-amarillo { color:#d97706; font-weight:bold; }
@@ -56,11 +49,10 @@ body {
 }
 
 #MainMenu, footer, header {visibility:hidden;}
-.block-container {padding-top:1rem;}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- CARGA CSV ----------------
+# ---------------- CARGA ----------------
 @st.cache_data(ttl=120)
 def cargar():
     try:
@@ -77,7 +69,7 @@ def cargar():
     soat = next((c for c in df.columns if "soat" in c), None)
 
     if not all([nombre, lic, tec, soat]):
-        st.error("❌ El archivo no tiene las columnas necesarias")
+        st.error("❌ Columnas no encontradas")
         st.stop()
 
     df = df[[nombre, lic, tec, soat]]
@@ -117,27 +109,23 @@ def enviar_telegram(lista):
 
     r = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": mensaje,
-            "parse_mode": "Markdown"
-        }
+        data={"chat_id": CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
     )
 
-    return (True, "Enviado a Telegram") if r.status_code == 200 else (False, r.text)
+    return (True, "Enviado") if r.status_code == 200 else (False, r.text)
 
 # ---------------- MENU ----------------
-menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Excel", "⚙️ Ajustes"], horizontal=True)
+menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Datos", "⚙️ Ajustes"], horizontal=True)
 
-# ================== INICIO ==================
+# ---------------- INICIO ----------------
 if menu == "🏠 Inicio":
 
-    st.markdown('<div class="topbar">🔎 Buscador de funcionarios con alertas</div>', unsafe_allow_html=True)
+    st.markdown('<div class="topbar">🔎 Buscador de funcionarios</div>', unsafe_allow_html=True)
 
-    buscar = st.text_input("Buscar funcionario")
+    buscar = st.text_input("Buscar")
 
     def alerta(r):
-        return any(pd.notna(r[c]) and r[c].date() <= hoy for c in ["Licencia", "Tecno", "SOAT"])
+        return any(pd.notna(r[c]) and r[c].date() <= hoy for c in ["Licencia","Tecno","SOAT"])
 
     df2 = df.copy()
     df2["ALERTA"] = df2.apply(alerta, axis=1)
@@ -151,108 +139,82 @@ if menu == "🏠 Inicio":
 
         nombre = row["Nombre"]
 
-        lic, lic_c = estado(row["Licencia"])
-        tec, tec_c = estado(row["Tecno"])
-        soa, soa_c = estado(row["SOAT"])
+        lic, lc = estado(row["Licencia"])
+        tec, tc = estado(row["Tecno"])
+        soa, sc = estado(row["SOAT"])
 
         st.markdown(f"""
         <div class="card">
             <div class="nombre">{nombre}</div>
-            Licencia: <span class="{lic_c}">{lic}</span><br>
-            Tecno: <span class="{tec_c}">{tec}</span><br>
-            SOAT: <span class="{soa_c}">{soa}</span>
+            Licencia: <span class="{lc}">{lic}</span><br>
+            Tecno: <span class="{tc}">{tec}</span><br>
+            SOAT: <span class="{sc}">{soa}</span>
         </div>
         """, unsafe_allow_html=True)
 
-        files = st.file_uploader(
-            f"📎 Documentos de {nombre}",
-            accept_multiple_files=True,
-            key=f"file_{i}"
-        )
+        files = st.file_uploader(f"📎 Documentos {nombre}", accept_multiple_files=True, key=i)
 
         if files:
             st.session_state.soportes[nombre] = files
 
         if st.session_state.soportes.get(nombre):
-
             zip_buffer = BytesIO()
-
             with zipfile.ZipFile(zip_buffer, "w") as zipf:
                 for f in st.session_state.soportes[nombre]:
                     zipf.writestr(f.name, f.getvalue())
 
-            st.download_button(
-                "⬇️ Descargar soportes",
-                zip_buffer.getvalue(),
-                file_name=f"{nombre}_soportes.zip"
-            )
+            st.download_button("⬇️ Descargar soportes", zip_buffer.getvalue(), f"{nombre}.zip")
 
-# ================== ALERTAS ==================
+# ---------------- ALERTAS ----------------
 if menu == "🚨 Alertas":
 
     lista = []
 
     for _, r in df.iterrows():
-        for c in ["Licencia", "Tecno", "SOAT"]:
+        for c in ["Licencia","Tecno","SOAT"]:
             if pd.notna(r[c]) and r[c].date() <= hoy:
-                lista.append(f"{r['Nombre']} → {c} vencido o próximo")
+                lista.append(f"{r['Nombre']} → {c}")
 
-    if lista:
-        st.error("\n".join(lista))
-    else:
-        st.success("Sin alertas 🚀")
+    st.error("\n".join(lista) if lista else "Sin alertas")
 
-    if st.button("📲 Enviar a Telegram"):
+    if st.button("📲 Enviar Telegram"):
         ok, msg = enviar_telegram(lista)
         st.success(msg) if ok else st.error(msg)
 
-# ================== DASHBOARD ==================
+# ---------------- DASHBOARD ----------------
 if menu == "📊 Dashboard":
 
     st.bar_chart(pd.DataFrame({
-        "Tipo": ["SOAT", "Tecno", "Licencia"],
-        "Vencidos": [
+        "Tipo":["SOAT","Tecno","Licencia"],
+        "Vencidos":[
             (df["SOAT"] < pd.to_datetime(hoy)).sum(),
             (df["Tecno"] < pd.to_datetime(hoy)).sum(),
             (df["Licencia"] < pd.to_datetime(hoy)).sum()
         ]
     }).set_index("Tipo"))
 
-# ================== EXCEL ==================
-if menu == "✍️ Excel":
+# ---------------- DATOS ----------------
+if menu == "✍️ Datos":
 
     edit = st.data_editor(df, use_container_width=True)
 
-    buffer = BytesIO()
-    edit.to_excel(buffer, index=False)
+    csv = edit.to_csv(index=False).encode("utf-8")
 
-    st.download_button("⬇️ Descargar Excel", buffer.getvalue(), "base.xlsx")
+    st.download_button(
+        "⬇️ Descargar CSV",
+        csv,
+        "base.csv",
+        "text/csv"
+    )
 
-# ================== AJUSTES ==================
+# ---------------- AJUSTES ----------------
 if menu == "⚙️ Ajustes":
 
-    st.subheader("⚙️ Panel del sistema")
+    st.subheader("Panel del sistema")
 
-    st.success("✔ Sistema activo")
+    st.success("Sistema activo")
 
-    if TELEGRAM_TOKEN and CHAT_ID:
-        st.success("✔ Telegram configurado")
+    if TELEGRAM_TOKEN:
+        st.success("Telegram OK")
     else:
-        st.warning("⚠ Telegram no configurado")
-
-    st.divider()
-
-    if st.button("📲 Enviar reporte completo a Telegram"):
-
-        lista = []
-
-        for _, r in df.iterrows():
-            for c in ["Licencia", "Tecno", "SOAT"]:
-                if pd.notna(r[c]) and r[c].date() <= hoy:
-                    lista.append(f"{r['Nombre']} → {c} vencido/próximo")
-
-        if lista:
-            ok, msg = enviar_telegram(lista)
-            st.success(msg) if ok else st.error(msg)
-        else:
-            st.info("No hay alertas para enviar")
+        st.warning("Telegram no configurado")
