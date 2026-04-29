@@ -8,7 +8,6 @@ import zipfile
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="DEI Control", layout="wide")
 
-# 🔥 GOOGLE SHEETS COMO CSV (ESTABLE)
 EXCEL_URL = "https://docs.google.com/spreadsheets/d/1E0nFTEfPtrxPNK-fdSuq9hGMFDFN_znD/gviz/tq?tqx=out:csv"
 
 try:
@@ -23,7 +22,7 @@ hoy = date.today()
 # ---------------- ESTILO ----------------
 st.markdown("""
 <style>
-body { background: #0b1220; color: #e5e7eb; }
+body { background: #0b1220; }
 
 .card {
     background: #ffffff;
@@ -34,19 +33,14 @@ body { background: #0b1220; color: #e5e7eb; }
     color: #0f172a;
 }
 
-.nombre { font-size: 18px; font-weight: 700; color: #0f172a; }
-
-.badge-rojo { color:#dc2626; font-weight:bold; }
-.badge-amarillo { color:#d97706; font-weight:bold; }
-.badge-verde { color:#16a34a; font-weight:bold; }
-
-.topbar {
-    background:#111827;
-    padding:10px;
-    border-radius:10px;
-    margin-bottom:15px;
-    color:white;
+.nombre {
+    font-size: 18px;
+    font-weight: bold;
 }
+
+.rojo { color:#dc2626; font-weight:bold; }
+.amarillo { color:#d97706; font-weight:bold; }
+.verde { color:#16a34a; font-weight:bold; }
 
 #MainMenu, footer, header {visibility:hidden;}
 </style>
@@ -55,22 +49,13 @@ body { background: #0b1220; color: #e5e7eb; }
 # ---------------- CARGA ----------------
 @st.cache_data(ttl=120)
 def cargar():
-    try:
-        df = pd.read_csv(EXCEL_URL)
-    except:
-        st.error("❌ Error cargando datos desde Google Sheets")
-        st.stop()
-
+    df = pd.read_csv(EXCEL_URL)
     df.columns = df.columns.str.strip().str.lower()
 
-    nombre = next((c for c in df.columns if "nombre" in c), None)
-    lic = next((c for c in df.columns if "licencia" in c), None)
-    tec = next((c for c in df.columns if "tecno" in c), None)
-    soat = next((c for c in df.columns if "soat" in c), None)
-
-    if not all([nombre, lic, tec, soat]):
-        st.error("❌ Columnas no encontradas")
-        st.stop()
+    nombre = next(c for c in df.columns if "nombre" in c)
+    lic = next(c for c in df.columns if "licencia" in c)
+    tec = next(c for c in df.columns if "tecno" in c)
+    soat = next(c for c in df.columns if "soat" in c)
 
     df = df[[nombre, lic, tec, soat]]
     df.columns = ["Nombre", "Licencia", "Tecno", "SOAT"]
@@ -89,23 +74,18 @@ if "soportes" not in st.session_state:
 # ---------------- ESTADO ----------------
 def estado(fecha):
     if pd.isna(fecha):
-        return "COMUNICADO", "badge-amarillo"
+        return "COMUNICADO", "amarillo"
     dias = (fecha.date() - hoy).days
     if dias < 0:
-        return "VENCIDO", "badge-rojo"
+        return "VENCIDO", "rojo"
     elif dias <= 5:
-        return "PRÓXIMO", "badge-amarillo"
-    return "AL DÍA", "badge-verde"
+        return "PRÓXIMO", "amarillo"
+    return "AL DÍA", "verde"
 
 # ---------------- TELEGRAM ----------------
-def enviar_telegram(lista):
+def enviar_telegram(mensaje):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return False, "Telegram no configurado"
-
-    if not lista:
-        return False, "Sin alertas"
-
-    mensaje = "🚨 *ALERTAS DOCUMENTALES*\n\n" + "\n".join(lista)
 
     r = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -120,9 +100,7 @@ menu = st.radio("", ["🏠 Inicio", "🚨 Alertas", "📊 Dashboard", "✍️ Da
 # ---------------- INICIO ----------------
 if menu == "🏠 Inicio":
 
-    st.markdown('<div class="topbar">🔎 Buscador de funcionarios</div>', unsafe_allow_html=True)
-
-    buscar = st.text_input("Buscar")
+    buscar = st.text_input("🔎 Buscar funcionario")
 
     def alerta(r):
         return any(pd.notna(r[c]) and r[c].date() <= hoy for c in ["Licencia","Tecno","SOAT"])
@@ -152,7 +130,7 @@ if menu == "🏠 Inicio":
         </div>
         """, unsafe_allow_html=True)
 
-        files = st.file_uploader(f"📎 Documentos {nombre}", accept_multiple_files=True, key=i)
+        files = st.file_uploader(f"📎 Subir documentos", accept_multiple_files=True, key=i)
 
         if files:
             st.session_state.soportes[nombre] = files
@@ -168,18 +146,46 @@ if menu == "🏠 Inicio":
 # ---------------- ALERTAS ----------------
 if menu == "🚨 Alertas":
 
-    lista = []
+    st.subheader("🚨 Alertas organizadas")
+
+    data = []
 
     for _, r in df.iterrows():
-        for c in ["Licencia","Tecno","SOAT"]:
-            if pd.notna(r[c]) and r[c].date() <= hoy:
-                lista.append(f"{r['Nombre']} → {c}")
+        for tipo in ["Licencia", "Tecno", "SOAT"]:
+            fecha = r[tipo]
 
-    st.error("\n".join(lista) if lista else "Sin alertas")
+            if pd.notna(fecha):
+                dias = (fecha.date() - hoy).days
+
+                if dias < 0:
+                    estado_txt = "🔴 VENCIDO"
+                elif dias <= 5:
+                    estado_txt = "🟡 PRÓXIMO"
+                else:
+                    continue
+
+                data.append({
+                    "Funcionario": r["Nombre"],
+                    "Documento": tipo,
+                    "Fecha": fecha.date(),
+                    "Estado": estado_txt,
+                    "Días": dias
+                })
+
+    if data:
+        df_alertas = pd.DataFrame(data).sort_values(by="Días")
+        st.dataframe(df_alertas, use_container_width=True)
+    else:
+        st.success("Sin alertas")
 
     if st.button("📲 Enviar Telegram"):
-        ok, msg = enviar_telegram(lista)
-        st.success(msg) if ok else st.error(msg)
+        if data:
+            mensaje = "🚨 ALERTAS\n\n"
+            for d in data:
+                mensaje += f"{d['Funcionario']} → {d['Documento']} ({d['Estado']} {d['Fecha']})\n"
+
+            ok, msg = enviar_telegram(mensaje)
+            st.success(msg) if ok else st.error(msg)
 
 # ---------------- DASHBOARD ----------------
 if menu == "📊 Dashboard":
@@ -200,21 +206,14 @@ if menu == "✍️ Datos":
 
     csv = edit.to_csv(index=False).encode("utf-8")
 
-    st.download_button(
-        "⬇️ Descargar CSV",
-        csv,
-        "base.csv",
-        "text/csv"
-    )
+    st.download_button("⬇️ Descargar CSV", csv, "base.csv", "text/csv")
 
 # ---------------- AJUSTES ----------------
 if menu == "⚙️ Ajustes":
 
-    st.subheader("Panel del sistema")
-
     st.success("Sistema activo")
 
     if TELEGRAM_TOKEN:
-        st.success("Telegram OK")
+        st.success("Telegram configurado")
     else:
         st.warning("Telegram no configurado")
